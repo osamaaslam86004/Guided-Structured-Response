@@ -154,3 +154,6 @@ cython_debug/
 *.njsproj
 *.sln
 *.swp
+
+# AI Models
+*.gguf
