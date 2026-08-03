@@ -7,14 +7,14 @@ from schemas import SupportTicketAnalysis
 
 
 class ProductionEngine:
-
-  def __init__(
+    
+    def __init__(
       self,
       model_path: str = "./models/qwen2.5-0.5b-instruct-q4_0.gguf",
       repo_id: str = "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
       filename: str = "qwen2.5-0.5b-instruct-q4_0.gguf",
-      n_threads: int = None,
-  ):
+      n_threads: int = None
+      ):
         # Default to 3 threads or available CPU count
         if n_threads is None:
             n_threads = max(3, math.ceil(os.cpu_count() / 2))
@@ -24,21 +24,21 @@ class ProductionEngine:
 
         # 2. Check if model exists locally, otherwise auto-download from Hugging Face
         if os.path.exists(model_path):
-        print(f"Loading local model from {model_path}...")
-        llm = Llama(
-            model_path=model_path,
-            n_ctx=2048,
-            n_threads=n_threads,
-        )
+            print(f"Loading local model from {model_path}...")
+            llm = Llama(
+                model_path=model_path,
+                n_ctx=2048,
+                n_threads=n_threads,
+            )
         else:
-        print(f"Model not found at {model_path}. Downloading from Hugging Face ({repo_id})...")
-        llm = Llama.from_pretrained(
-            repo_id=repo_id,
-            filename=filename,
-            local_dir=os.path.dirname(model_path),
-            n_ctx=2048,
-            n_threads=n_threads,
-        )
+            print(f"Model not found at {model_path}. Downloading from Hugging Face ({repo_id})...")
+            llm = Llama.from_pretrained(
+                repo_id=repo_id,
+                filename=filename,
+                local_dir=os.path.dirname(model_path),
+                n_ctx=2048,
+                n_threads=n_threads,
+            )
 
         # 3. Wrap with Outlines
         self.model = outlines.from_llamacpp(llm)
