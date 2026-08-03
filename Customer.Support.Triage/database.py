@@ -3,6 +3,7 @@ import json
 import os
 import redis
 from sqlmodel import Field, Session, SQLModel, create_engine
+from typing import Optional
 
 # Database setup (SQLite by default)
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tickets.db")
