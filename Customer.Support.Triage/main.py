@@ -1,20 +1,61 @@
-from fastapi import FastAPI, Depends, HTTPException
-from pydantic import BaseModel
+from contextlib import asynccontextmanager
+import json
+from database import (
+    get_cached_analysis,
+    init_db,
+    save_ticket_to_db,
+    set_cached_analysis,
+)
 from engine import ProductionEngine, get_engine
-from schemas import SupportTicketAnalysis
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.concurrency import run_in_threadpool
+from schemas import SupportTicketAnalysis, TicketRequest, TicketResponse
 
-app = FastAPI(title="Outlines Production API")
 
-class TicketRequest(BaseModel):
-    ticket_text: str
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+  init_db()  # Initialize database tables on startup
+  yield
 
-@app.post("/analyze-ticket", response_model=SupportTicketAnalysis)
-def analyze_ticket(
-    payload: TicketRequest, 
-    engine: ProductionEngine = Depends(get_engine)
+
+app = FastAPI(title="Outlines Production API", lifespan=lifespan)
+
+
+@app.post("/analyze-ticket", response_model=TicketResponse)
+async def analyze_ticket(
+    payload: TicketRequest, engine: ProductionEngine = Depends(get_engine)
 ):
-    try:
-        result = engine.analyze(payload.ticket_text)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+  try:
+    # 1. Check Redis Cache
+    cached_data = get_cached_analysis(payload.ticket_text)
+    if cached_data:
+      analysis = SupportTicketAnalysis.model_validate(cached_data)
+      db_record = save_ticket_to_db(
+          payload.ticket_text, analysis.model_dump()
+      )
+      return TicketResponse(
+          id=db_record.id,
+          ticket_text=payload.ticket_text,
+          cached=True,
+          analysis=analysis,
+      )
+
+    # 2. Cache Miss -> Run CPU Inference
+    analysis = await run_in_threadpool(
+        engine.analyze, payload.ticket_text, payload.prompt
+    )
+    analysis_dict = analysis.model_dump()
+
+    # 3. Cache Result in Redis & Save to Database
+    set_cached_analysis(payload.ticket_text, analysis_dict)
+    db_record = save_ticket_to_db(payload.ticket_text, analysis_dict)
+
+    return TicketResponse(
+        id=db_record.id,
+        ticket_text=payload.ticket_text,
+        cached=False,
+        analysis=analysis,
+    )
+
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=str(e))

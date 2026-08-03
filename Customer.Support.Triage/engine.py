@@ -9,7 +9,7 @@ from typing import Optional
 class ProductionEngine:
     def __init__(self, model_path: str = "./models/qwen2.5-0.5b-instruct-q4_0.gguf", n_threads: int = None,):
 
-        # Default to 4 threads or available CPU count
+        # Default to 3 threads or available CPU count
         if n_threads is None:
             n_threads = max(3, math.ceil(os.cpu_count() / 2))
 
@@ -49,7 +49,10 @@ class ProductionEngine:
             stop=["<|im_end|>", "<|endoftext|>"],
         )
 
-        return SupportTicketAnalysis.model_validate_json(raw_json)
+        # Validate and return structured output 
+        validated_analysis = SupportTicketAnalysis.model_validate_json(raw_json)
+
+        return validated_analysis
 
 
 # Singleton Pattern
@@ -58,5 +61,5 @@ _engine_instance = None
 def get_engine() -> ProductionEngine:
     global _engine_instance
     if _engine_instance is None:
-        _engine_instance = ProductionEngine(model_path="./models/qwen2.5-0.5b-instruct-q4_0.gguf")
+        _engine_instance = ProductionEngine()
     return _engine_instance

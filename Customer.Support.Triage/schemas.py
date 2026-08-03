@@ -1,9 +1,5 @@
-from pydantic import BaseModel, Field
 from enum import Enum
-from typing import List
-
-from enum import Enum
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -14,30 +10,43 @@ class Severity(str, Enum):
   CRITICAL = "critical"
 
 
+# Enforced team categories
+class Team(str, Enum):
+  BILLING = "Billing"
+  SUPPORT = "Support"
+  ENGINEERING = "Engineering"
+  DEVOPS = "DevOps"
+  PRODUCT = "Product"
+
+
 class ActionableItem(BaseModel):
   task: str = Field(
       ...,
       min_length=5,
       max_length=60,
-      description="Specific, non-generic step to resolve the issue",
+      description="Specific action step to take",
   )
-  assigned_team: str = Field(
-      ...,
-      min_length=2,
-      max_length=30,
-      description="Responsible department (e.g. Engineering, Billing, DevOps)",
-  )
+  assigned_team: Team  # Model forced to pick from Team enum
 
 
 class SupportTicketAnalysis(BaseModel):
   summary: str = Field(
-      ...,
-      min_length=10,
-      max_length=120,
-      description="Brief breakdown of the customer's issue",
+      ..., min_length=10, max_length=120, description="Brief issue summary"
   )
   severity: Severity
-  # HARD CAP: Prevents repetitive loops by capping the list size to 2
   action_items: List[ActionableItem] = Field(
       ..., max_items=2, description="1 or 2 distinct action items"
   )
+
+
+# API Request / Response schemas
+class TicketRequest(BaseModel):
+  ticket_text: str
+  prompt: Optional[str] = None
+
+
+class TicketResponse(BaseModel):
+  id: int
+  ticket_text: str
+  cached: bool
+  analysis: SupportTicketAnalysis
