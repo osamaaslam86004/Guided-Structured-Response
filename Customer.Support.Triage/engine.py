@@ -7,73 +7,82 @@ from schemas import SupportTicketAnalysis
 
 
 class ProductionEngine:
-    
-    def __init__(
+
+  def __init__(
       self,
       model_path: str = "./models/qwen2.5-0.5b-instruct-q4_0.gguf",
       repo_id: str = "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
       filename: str = "qwen2.5-0.5b-instruct-q4_0.gguf",
-      n_threads: int = None
-      ):
-        # Default to 3 threads or available CPU count
-        if n_threads is None:
-            n_threads = max(3, math.ceil(os.cpu_count() / 2))
+      n_threads: int = None,
+  ):
+    if n_threads is None:
+      n_threads = max(3, math.ceil(os.cpu_count() / 2)) 
 
-        # 1. Ensure target directory exists
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    os.makedirs(os.path.dirname(model_path), exist_ok=True) 
 
-        # 2. Check if model exists locally, otherwise auto-download from Hugging Face
-        if os.path.exists(model_path):
-            print(f"Loading local model from {model_path}...")
-            llm = Llama(
-                model_path=model_path,
-                n_ctx=2048,
-                n_threads=n_threads,
-            )
-        else:
-            print(f"Model not found at {model_path}. Downloading from Hugging Face ({repo_id})...")
-            llm = Llama.from_pretrained(
-                repo_id=repo_id,
-                filename=filename,
-                local_dir=os.path.dirname(model_path),
-                n_ctx=2048,
-                n_threads=n_threads,
-            )
+    if os.path.exists(model_path): 
+      print(f"Loading local model from {model_path}...") 
+      llm = Llama(
+          model_path=model_path,
+          n_ctx=2048,
+          n_threads=n_threads,
+      ) 
+    else:
+      print(
+          "Model not found at"
+          f" {model_path}. Downloading from Hugging Face ({repo_id})..."
+      ) 
+      llm = Llama.from_pretrained(
+          repo_id=repo_id,
+          filename=filename,
+          local_dir=os.path.dirname(model_path),
+          n_ctx=2048,
+          n_threads=n_threads,
+      ) 
 
-        # 3. Wrap with Outlines
-        self.model = outlines.from_llamacpp(llm)
+    self.model = outlines.from_llamacpp(llm) 
 
-    def analyze(self, text: str, custom_prompt: Optional[str] = None) -> SupportTicketAnalysis:
-        base_instruction = (
-            custom_prompt
-            or "Summarize the support ticket, assess its severity, and list up to 2 distinct \
-            actionable items."
-        )
+  def analyze(
+      self, text: str, custom_prompt: Optional[str] = None
+  ) -> SupportTicketAnalysis:
+    # 1. Provide clear rules to guide small models (0.5B)
+    rules = (
+        "RULES FOR CLASSIFICATION:\n"
+        "- Severity: 'low' for feature requests/ui preferences, 'medium' for minor bugs/questions, 'high' for double charges/refunds, 'critical' for system downtime/500 errors.\n"
+        "- Teams: 'Billing' for payments/refunds, 'Engineering' or 'DevOps' for server/500 errors/bugs, 'Product' for dark mode/feature requests, 'Support' for general help."
+    )
 
-        prompt = (
-            f"<|im_start|>system\n"
-            f"You are a ticket triage assistant. Be concise.<|im_end|>\n"
-            f"<|im_start|>user\n"
-            f"Instruction: {base_instruction}\n"
-            f"Ticket: {text}<|im_end|>\n"
-            f"<|im_start|>assistant\n"
-        )
+    base_instruction = (
+        custom_prompt
+        or "Summarize the ticket, assess severity, and assign actionable steps to the correct team."
+    )
 
-        raw_json = self.model(
-            prompt,
-            output_type=SupportTicketAnalysis,
-            temperature=0.1,
-            max_tokens=300,
-            stop=["<|im_end|>", "<|endoftext|>"],
-        )
+    prompt = (
+        f"<|im_start|>system\n"
+        f"You are an expert ticket triage classifier. Follow classification rules strictly.\n"
+        f"{rules}<|im_end|>\n"
+        f"<|im_start|>user\n"
+        f"Instruction: {base_instruction}\n"
+        f"Ticket Content: {text}<|im_end|>\n"
+        f"<|im_start|>assistant\n"
+    )
 
-        return SupportTicketAnalysis.model_validate_json(raw_json)
+    raw_json = self.model(
+        prompt,
+        output_type=SupportTicketAnalysis,
+        temperature=0.0,  # GREEDY SAMPLING: forces strict adherence to prompt rules
+        max_tokens=300, 
+        stop=["<|im_end|>", "<|endoftext|>"], 
+    )
+
+    return SupportTicketAnalysis.model_validate_json(raw_json) 
 
 
-_engine_instance = None
+_engine_instance = None 
+
 
 def get_engine() -> ProductionEngine:
-    global _engine_instance
-    if _engine_instance is None:
-        _engine_instance = ProductionEngine()
-    return _engine_instance
+  global _engine_instance 
+  if _engine_instance is None: 
+    _engine_instance = ProductionEngine() 
+  return _engine_instance 

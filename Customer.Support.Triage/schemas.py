@@ -10,7 +10,6 @@ class Severity(str, Enum):
   CRITICAL = "critical"
 
 
-# Enforced team categories
 class Team(str, Enum):
   BILLING = "Billing"
   SUPPORT = "Support"
@@ -24,20 +23,34 @@ class ActionableItem(BaseModel):
       ...,
       min_length=5,
       max_length=60,
-      description="Specific action step to take",
+      description="Clear resolution action step",
   )
-  assigned_team: Team  # Model forced to pick from Team enum
+  assigned_team: Team = Field(
+      ...,
+      description=(
+          "Assign Billing for payments, Engineering for technical errors,"
+          " Product for features, Support for general questions"
+      ),
+  )
 
 
 class SupportTicketAnalysis(BaseModel):
   summary: str = Field(
-      ..., min_length=10, max_length=120, description="Brief issue summary"
+      ...,
+      min_length=10,
+      max_length=120,
+      description="Brief summary of the issue without ending in slashes or punctuation errors",
   )
-  severity: Severity
+  severity: Severity = Field(
+      ...,
+      description=(
+          "low for feature requests, high for payment issues, critical for 500"
+          " server errors"
+      ),
+  )
   action_items: List[ActionableItem] = Field(
-      ..., max_items=2, description="1 or 2 distinct action items"
+      ..., max_items=2, description="List up to 2 items"
   )
-
 
 # API Request / Response schemas
 class TicketRequest(BaseModel):
