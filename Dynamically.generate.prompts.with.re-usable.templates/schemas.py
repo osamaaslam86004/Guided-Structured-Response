@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SentimentType(str, Enum):
@@ -21,12 +21,21 @@ class SentimentAnalysisOutput(BaseModel):
   confidence_score: float = Field(
       ..., ge=0.0, le=1.0, description="Confidence rating between 0 and 1"
   )
-  summary: str = Field(
-      ..., max_length=120, description="Concise summary of the review text"
-  )
+  summary: str = Field(..., min_length=5, max_length=100,
+                       description=(
+                         "Direct 1-sentence summary of the user's feedback text. DO NOT explain \
+                          'your reasoning' or mention 'the user'"))
   key_aspects: List[ActionableAspect] = Field(
       default_factory=list, description="Key features evaluated"
   )
+
+  @field_validator("confidence_score", mode="before")
+  @classmethod
+  def normalize_confidence(cls, v):
+    # Automatically convert percentage scores (e.g., 90) to decimal floats (0.90)
+    if isinstance(v, (int, float)) and v > 1.0:
+      return v / 100.0
+    return v
 
 
 class SingleReviewRequest(BaseModel):

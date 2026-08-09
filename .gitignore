@@ -156,4 +156,18 @@ cython_debug/
 *.swp
 
 # AI Models
+# Ignore any directory named 'model' or 'models' anywhere in the project
+**/model/
+**/models/
+
+# Ignore Hugging Face cache directories
+**/.cache/huggingface/
+.cache/
+
+# Ignore large model files directly (safety net)
 *.gguf
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth

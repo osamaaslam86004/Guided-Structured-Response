@@ -2,7 +2,12 @@ from celery_app import celery_app
 from engine import get_sentiment_engine
 
 
-@celery_app.task(bind=True)
+@celery_app.task(
+    bind=True,
+    autoretry_for=(Exception,),  # Retry on exceptions
+    retry_kwargs={'max_retries': 3},  # Retry up to 3 times
+    retry_backoff=True,  # Wait longer between retries
+)
 def process_batch_reviews(self, reviews_list: list):
   engine = get_sentiment_engine()
   results = []

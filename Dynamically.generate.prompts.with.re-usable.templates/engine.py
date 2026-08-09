@@ -1,4 +1,5 @@
 import os
+import math
 from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download
 from llama_cpp import Llama
@@ -11,14 +12,14 @@ load_dotenv()
 
 logging.set_verbosity_info()
 
-HUGGINGFACE_HUB_TOKEN = os.environ.get("HUGGINGFACE_HUB_TOKEN")
+HUGGINGFACE_HUB_TOKEN = os.environ.get("HF_TOKEN")
 
 class SentimentEngine:
 
   def __init__(
       self,
       repo_id: str = "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
-      filename: str = "qwen2.5-0.5b-instruct-q4_0.gguf",
+      filename: str = "qwen2.5-0.5b-instruct-q8_0.gguf",
       cache_dir: str = "./models/huggingface",
       n_threads: int = None,
   ):
@@ -32,8 +33,7 @@ class SentimentEngine:
         repo_id=repo_id,
         filename=filename,
         cache_dir=cache_dir,
-        token=HUGGINGFACE_HUB_TOKEN,
-        tqdm_class=logging.get_progress_bar()
+        token=HUGGINGFACE_HUB_TOKEN
     )
 
     print(f"Model available at: {model_path}")
@@ -99,3 +99,9 @@ def get_sentiment_engine() -> SentimentEngine:
   if _engine is None:
     _engine = SentimentEngine()
   return _engine
+
+
+
+
+
+ 
