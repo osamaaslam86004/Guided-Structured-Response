@@ -1,19 +1,25 @@
 import math
 import os
 from typing import Optional
+from huggingface_hub import hf_hub_download
 from llama_cpp import Llama
 import outlines
+from dotenv import load_dotenv
 from schemas import SupportTicketAnalysis
+
+load_dotenv()
+
+HUGGINGFACE_HUB_TOKEN = os.environ.get("HUGGINGFACE_HUB_TOKEN")
 
 
 class ProductionEngine:
 
   def __init__(
       self,
-      model_path: str = "./models/qwen2.5-0.5b-instruct-q8_0.gguf", 
-      repo_id: str = "Qwen/Qwen2.5-0.5B-Instruct-GGUF",  
-      filename: str = "qwen2.5-0.5b-instruct-q8_0.gguf",  
-      n_threads: int = None,  
+      model_path: str = "./models/qwen2.5-1.5b-instruct-fp16.gguf",
+      repo_id: str = "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+      filename: str = "qwen2.5-1.5b-instruct-fp16.gguf",
+      n_threads: int = None,
   ):
     if n_threads is None:  
       n_threads = max(3, math.ceil(os.cpu_count() / 2))  
@@ -32,10 +38,14 @@ class ProductionEngine:
           "Model not found at"
           f" {model_path}. Downloading from Hugging Face ({repo_id})..."
       )  
-      llm = Llama.from_pretrained(
-          repo_id=repo_id,  
-          filename=filename,  
-          local_dir=os.path.dirname(model_path),  
+      model_path = hf_hub_download(
+          repo_id=repo_id,
+          filename=filename,
+          local_dir=os.path.dirname(model_path),
+          token=HUGGINGFACE_HUB_TOKEN,
+      )
+      llm = Llama(
+          model_path=model_path,  
           n_ctx=2048,  
           n_threads=n_threads,  
       )
@@ -48,27 +58,25 @@ class ProductionEngine:
 
     # System prompt using Few-Shot examples to firmly instruct the 0.5B model
     system_prompt = (
-        "You are an automated ticket triage classifier. Follow these mapping rules strictly:\n"
-        "1. User Interface and Experience / Feature requests -> team: Product, severity: low\n"
-        "2. Server issues / Dashboard crashes -> team: Engineering, severity: critical or high\n"
-        "3. Double charges / Refunds / Subscription payments -> team: Billing, severity: high\n"
-        "4. General questions / How-to -> team: Support, severity: low or medium"
+        "You are an automated support ticket classifier. "
+        "Classify tickets accurately using these rules:\n"
+        "- Feature requests / UI requests -> team: Product, severity: low\n"
+        "- Server errors / downtime -> team: Engineering, severity: critical\n"
+        "- Charge issues / Refunds / Billing -> team: Billing, severity: high"
     )
-
     # Place custom_prompt as context, prioritizing core triage requirements
     prompt = (
         f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
-        f"<|im_start|>user\n"
-        f"Ticket: {text}\n"
-        f"Note: {custom_prompt or 'Perform standard ticket triage'}<|im_end|>\n"
+        f"<|im_start|>user\n Ticket:{text}<|im_end|>\n"
         f"<|im_start|>assistant\n"
     )
 
     raw_json = self.model(
         prompt,
         output_type=SupportTicketAnalysis,
-        temperature=0.0,  # Zero temperature for deterministic enum matching
-        max_tokens=256,
+        temperature=0.1,  # Slight entropy breaks repetition loops
+        top_p=0.9,
+        max_tokens=200,   # Shorter ceiling prevents extra filler words
         stop=["<|im_end|>", "<|endoftext|>"],  
     )
 

@@ -8,6 +8,7 @@ from database import (
 )
 from engine import ProductionEngine, get_engine
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 from schemas import SupportTicketAnalysis, TicketRequest, TicketResponse
 
@@ -19,6 +20,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Outlines Production API", lifespan=lifespan)
+
+
+# Enable CORS so your Vercel frontend can securely communicate with this backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Replace with your Vercel production URL later
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
 
 
 @app.post("/analyze-ticket", response_model=TicketResponse)
