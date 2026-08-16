@@ -4,6 +4,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+  init_db()  # Initialize database tables on startup
+  yield
+
+
 app = FastAPI(
     title="Google Calendar Function Calling Engine",
     version="3.0.0",
@@ -11,12 +17,8 @@ app = FastAPI(
         "Outlines-powered engine for extracting Google Calendar tool parameters"
         " from text."
     ),
+    lifespan=lifespan,
 )
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-  init_db()  # Initialize database tables on startup
-  yield
 
 
 # Enable CORS so your Vercel frontend can securely communicate with this backend

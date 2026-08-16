@@ -13,8 +13,21 @@ class CalendarEventDB(SQLModel, table=True):
   start_time: str
   end_time: str
   attendees_json: str
+  meeting_link: Optional[str] = Field(default=None)  # Added Meeting Link
   status: str = "scheduled"
   raw_function_call_json: str
+
+
+class OAuthTokenDB(SQLModel, table=True):
+  id: Optional[int] = Field(default=None, primary_key=True)
+  user_email: str = Field(default="primary_user", unique=True, index=True)
+  access_token: str
+  refresh_token: str
+  token_uri: str = "https://oauth2.googleapis.com/token"
+  client_id: str
+  client_secret: str
+  scopes_json: str  # JSON-encoded list of scopes
+  expiry: Optional[str] = None  # ISO format timestamp string
 
 
 def init_db():

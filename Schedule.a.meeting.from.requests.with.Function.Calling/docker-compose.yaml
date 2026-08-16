@@ -8,9 +8,12 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - GOOGLE_SERVICE_ACCOUNT_FILE=/app/credentials.json
+      - GOOGLE_CALENDAR_ID=primary
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./credentials.json:/app/credentials.json
     depends_on:
       - redis
 
@@ -21,9 +24,12 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - GOOGLE_SERVICE_ACCOUNT_FILE=/app/credentials.json
+      - GOOGLE_CALENDAR_ID=primary
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./credentials.json:/app/credentials.json
     depends_on:
       - redis
 
