@@ -48,6 +48,8 @@ class ScheduleCalendarEventFunction(BaseModel):
 class UserScheduleRequest(BaseModel):
   request_text: str = Field(
       ...,
+      min_length=5,
+      max_length=5000,
       example=(
           "Schedule a team sync with john@example.com and sarah@company.com"
           " tomorrow at 3 PM UTC for 45 minutes to discuss project roadmap."
@@ -61,7 +63,15 @@ class FunctionCallResponse(BaseModel):
   function_call: ScheduleCalendarEventFunction
 
 
+class AuthUser(BaseModel):
+    id: int
+    email: EmailStr
+    name: Optional[str] = None
+    picture: Optional[str] = None
+
+
 class TaskStatusResponse(BaseModel):
-  task_id: str
-  status: str
-  result: Optional[dict] = None
+    task_id: str
+    status: str
+    result: Optional[dict] = None
+    error: Optional[str] = None

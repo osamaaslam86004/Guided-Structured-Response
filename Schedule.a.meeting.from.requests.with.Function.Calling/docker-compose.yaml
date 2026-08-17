@@ -1,40 +1,112 @@
 services:
-  web:
-    build: .
-    container_name: calendar_fastapi
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
-    ports:
-      - "8000:8000"
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - GOOGLE_SERVICE_ACCOUNT_FILE=/app/credentials.json
-      - GOOGLE_CALENDAR_ID=primary
-    volumes:
-      - ./data:/app/data
-      - ./models:/app/models
-      - ./credentials.json:/app/credentials.json
-    depends_on:
-      - redis
 
-  celery_worker:
-    build: .
-    container_name: calendar_celery_worker
-    command: celery -A tasks.celery_app worker --loglevel=info -c 1
+  postgres:
+    image: postgres:16-alpine
+
     environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - GOOGLE_SERVICE_ACCOUNT_FILE=/app/credentials.json
-      - GOOGLE_CALENDAR_ID=primary
+      POSTGRES_DB: calendar_service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
     volumes:
-      - ./data:/app/data
-      - ./models:/app/models
-      - ./credentials.json:/app/credentials.json
-    depends_on:
-      - redis
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U postgres -d calendar_service"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 
   redis:
     image: redis:7-alpine
-    container_name: calendar_redis
+
+    command:
+      - redis-server
+      - --appendonly
+      - yes
+
+    volumes:
+      - redis_data:/data
+
+
+  web:
+    build: .
+
+    depends_on:
+
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_started
+
+    environment:
+
+      DATABASE_URL: >-
+        postgresql+asyncpg://postgres:postgres@postgres:5432/calendar_service
+
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SESSION_SECRET: ${SESSION_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
+      FRONTEND_URL: ${FRONTEND_URL}
+
     ports:
-      - "6379:6379"
+      - "8000:8000"
+
+    command:
+      [
+        "uvicorn",
+        "main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000"
+      ]
+
+
+  celery_worker:
+    build: .
+
+    depends_on:
+
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_started
+
+    environment:
+
+      DATABASE_URL: >-
+        postgresql+asyncpg://postgres:postgres@postgres:5432/calendar_service
+
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+
+    command:
+      [
+        "celery",
+        "-A",
+        "tasks.celery_app",
+        "worker",
+        "--loglevel=info",
+        "-Q",
+        "calendar",
+        "-c",
+        "1"
+      ]
+
+
+volumes:
+  postgres_data:
+  redis_data:
