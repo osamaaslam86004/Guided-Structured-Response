@@ -25,7 +25,7 @@ class ScheduleCalendarEventFunction(BaseModel):
   summary: str = Field(
       ...,
       min_length=3,
-      max_length=100,
+      max_length=200,
       description="Title or summary of the meeting event",
   )
   description: Optional[str] = Field(

@@ -122,6 +122,8 @@ async def _execute_schedule(
 @celery_app.task(
     bind=True,
     name="tasks.execute_calendar_schedule_task",
+    soft_time_limit=1200,
+    time_limit=1500,
     max_retries=5,
     acks_late=True,
 )
