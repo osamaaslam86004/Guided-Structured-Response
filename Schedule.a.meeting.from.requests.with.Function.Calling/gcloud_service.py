@@ -5,6 +5,7 @@ import json
 import os
 import uuid
 import redis
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from google.auth.transport.requests import Request
@@ -12,8 +13,9 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import AsyncSessionLocal, OAuthTokenDB
+from database import OAuthTokenDB
 
 # Initialize Redis client
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -23,13 +25,15 @@ redis_client = redis.Redis(
 )
 
 CACHE_TTL_SECONDS = 3600  # 1 hour cache window
+DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
 class GoogleCalendarService:
 
-    def __init__(self, user_id: int):
+    def __init__(self, user_id: int, session: AsyncSession):
 
         self.user_id = user_id
+        self.session = session
         self.calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
 
     async def _get_credentials(self) -> Optional[Credentials]:
@@ -42,6 +46,10 @@ class GoogleCalendarService:
 
         if cached_token_data:
             token_dict = json.loads(cached_token_data)
+
+            expiry_raw = token_dict.get("expiry")
+            expiry_dt = datetime.fromisoformat(expiry_raw) if expiry_raw else None
+
             credentials = Credentials(
                 token=token_dict.get("access_token"),
                 refresh_token=token_dict.get("refresh_token"),
@@ -49,47 +57,59 @@ class GoogleCalendarService:
                 client_id=token_dict.get("client_id"),
                 client_secret=token_dict.get("client_secret"),
                 scopes=token_dict.get("scopes"),
-                expiry=token_dict.get("expiry"),
+                expiry=expiry_dt,
             )
             return credentials
 
-        async with AsyncSessionLocal() as session:
+        # Step 2: Fetch from Database
+        result = await self.session.execute(
+            select(OAuthTokenDB).where(OAuthTokenDB.user_id == self.user_id)
+        )
 
-            result = await session.execute(
-                select(OAuthTokenDB).where(OAuthTokenDB.user_id == self.user_id)
-            )
+        token = result.scalar_one_or_none()
 
-            token = result.scalar_one_or_none()
+        if not token:
+            return None
 
-            if not token:
-                return None
+        token_uri = getattr(token, "token_uri", None) or DEFAULT_TOKEN_URI
 
-            credentials = Credentials(
-                token=token.access_token,
-                refresh_token=(token.refresh_token),
-                token_uri=(token.token_uri),
-                client_id=(token.client_id),
-                client_secret=(token.client_secret),
-                scopes=token.scopes,
-                expiry=token.expiry,
-            )
+        credentials = Credentials(
+            token=token.access_token,
+            refresh_token=(token.refresh_token),
+            token_uri=(token.token_uri),
+            client_id=(token.client_id),
+            client_secret=(token.client_secret),
+            scopes=token.scopes,
+            expiry=token.expiry,
+        )
 
-            # Refresh the token if it's expired
-            if credentials.expired and credentials.refresh_token:
+        # Refresh the token if it's expired
+        if credentials.expired and credentials.refresh_token:
 
-                credentials.refresh(Request())
+            credentials.refresh(Request())
 
-                token.access_token = credentials.token
+            token.access_token = credentials.token
 
-                # Update the expiry in the database
-                token.expiry = credentials.expiry
+            # Update the expiry in the database
+            token.expiry = credentials.expiry
 
-                await session.commit()
+            await self.session.commit()
 
-                # Write back to Redis Cache
-                redis_client.set(
-                    cache_key, json.dumps(token.model_dump()), ex=CACHE_TTL_SECONDS
-                )
+            # Build clean serializable dict for Redis Cache
+            cache_payload = {
+                "access_token": credentials.token,
+                "refresh_token": credentials.refresh_token,
+                "token_uri": credentials.token_uri,
+                "client_id": credentials.client_id,
+                "client_secret": credentials.client_secret,
+                "scopes": credentials.scopes,
+                "expiry": (
+                    credentials.expiry.isoformat() if credentials.expiry else None
+                ),
+            }
+
+            # Write back to Redis Cache
+            redis_client.set(cache_key, json.dumps(cache_payload), ex=CACHE_TTL_SECONDS)
 
         return credentials
 
@@ -167,6 +187,8 @@ class GoogleCalendarService:
         }
 
 
-async def get_gcal_service(user_id: int) -> GoogleCalendarService:
+async def get_gcal_service(
+    user_id: int, session: AsyncSession
+) -> GoogleCalendarService:
 
-    return GoogleCalendarService(user_id=user_id)
+    return GoogleCalendarService(user_id=user_id, session=session)

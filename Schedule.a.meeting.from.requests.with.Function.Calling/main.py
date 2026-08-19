@@ -35,17 +35,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Set https_only=False for local HTTP testing
+IS_PRODUCTION = os.getenv("ENVIRONMENT") == "production"
 
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.environ["SESSION_SECRET"],
-    https_only=True,
+    https_only=IS_PRODUCTION,
     same_site="lax",
 )
 
+# Parse explicit origin array instead of passing wildcards with credentials
+raw_frontend_url = os.getenv("FRONTEND_URL", "http://127.0.0.1:8000")
+allowed_origins = [url.strip() for url in raw_frontend_url.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "*")],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
