@@ -21,12 +21,26 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+# Static System Instructions (Exact string match across all calls for Maximum Cache Hits)
+STATIC_SYSTEM_INSTRUCTIONS = (
+    "You are an AI calendar assistant. Convert user scheduling requests into structured Google Calendar event JSON arguments.\n\n"
+    "CRITICAL RULES:\n"
+    "1. Calculate start and end dates relative to the provided CURRENT DATETIME REFERENCE.\n"
+    "2. 'tomorrow' means the day immediately following the provided CURRENT DATE.\n"
+    "3. Ensure 'start.date_time' and 'end.date_time' are valid ISO 8601 strings (YYYY-MM-DDTHH:MM:SSZ).\n"
+    "4. Calculate end time by adding the duration to the start time.\n"
+    "5. If a time slot or duration is missing or ambiguous, ask the user or infer sensible defaults strictly adhering to the schema."
+)
+
+
 # ==========================================
 # 1. BASE PROVIDER INTERFACE
 # ==========================================
 class BaseLLMProvider(ABC):
     @abstractmethod
-    def generate_schedule(self, prompt: str) -> ScheduleCalendarEventFunction:
+    def generate_schedule(
+        self, system_instruction: str, user_content: str
+    ) -> ScheduleCalendarEventFunction:
         pass
 
 
@@ -38,7 +52,9 @@ class OpenRouterProvider(BaseLLMProvider):
         self.api_key = os.environ.get("OPENROUTER_API_KEY")
         self.model_name = model_name
 
-    def generate_schedule(self, prompt: str) -> ScheduleCalendarEventFunction:
+    def generate_schedule(
+        self, system_instruction: str, user_content: str
+    ) -> ScheduleCalendarEventFunction:
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is not set.")
 
@@ -52,7 +68,10 @@ class OpenRouterProvider(BaseLLMProvider):
         # Enforce JSON Schema via OpenRouter structured output
         payload = {
             "model": self.model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": user_content},
+            ],
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
@@ -89,14 +108,18 @@ class GoogleProvider(BaseLLMProvider):
             return genai.Client(api_key=self.api_key)
         return None
 
-    def generate_schedule(self, prompt: str) -> ScheduleCalendarEventFunction:
+    def generate_schedule(
+        self, system_instruction: str, user_content: str
+    ) -> ScheduleCalendarEventFunction:
+
         if not self.api_key or not self.client:
             raise ValueError("GEMINI_API_KEY is missing or invalid.")
 
         # Native schema enforcement via Google GenAI SDK
+        # Pass static instructions into system_instruction field for API prompt caching
         response = self.client.models.generate_content(
             model=self.model_name,
-            contents=prompt,
+            contents=user_content,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=ScheduleCalendarEventFunction,
@@ -144,11 +167,16 @@ class LocalLlamaProvider(BaseLLMProvider):
             llm = Llama(model_path=model_path, n_ctx=2048, n_threads=n_threads)
             self._model = outlines.from_llamacpp(llm)
 
-    def generate_schedule(self, prompt: str) -> ScheduleCalendarEventFunction:
+    def generate_schedule(
+        self, system_instruction: str, user_content: str
+    ) -> ScheduleCalendarEventFunction:
+
         self._initialize_model()
 
         formatted_prompt = (
-            f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+            f"<|im_start|>system\n{system_instruction}<|im_end|>\n"
+            f"<|im_start|>user\n{user_content}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
         )
 
         raw_json = self._model(
@@ -162,7 +190,7 @@ class LocalLlamaProvider(BaseLLMProvider):
 
 
 # ==========================================
-# 4. FALLBACK ENGINE ORCHESTRATOR
+# 5. FALLBACK ENGINE ORCHESTRATOR
 # ==========================================
 class CalendarFunctionEngine:
     def __init__(self):
@@ -175,28 +203,24 @@ class CalendarFunctionEngine:
         current_date_str = now_utc.strftime("%Y-%m-%d (%A)")
 
         return (
-            "You are an AI calendar assistant. Convert scheduling requests into structured JSON arguments.\n"
             f"CURRENT DATETIME REFERENCE (UTC): {current_iso}\n"
             f"CURRENT DATE: {current_date_str}\n\n"
-            "CRITICAL RULES:\n"
-            "1. Calculate start and end dates relative to CURRENT DATETIME REFERENCE.\n"
-            "2. 'tomorrow' means the day immediately following CURRENT DATE.\n"
-            "3. Ensure 'start.date_time' and 'end.date_time' are valid ISO 8601 strings (YYYY-MM-DDTHH:MM:SSZ).\n"
-            "4. Calculate end time by adding the duration to the start time.\n\n"
             f"User Request: {request_text}"
         )
 
     def extract_calendar_function(
         self, request_text: str
     ) -> ScheduleCalendarEventFunction:
-        prompt = self._build_prompt(request_text)
+
+        system_instruction = STATIC_SYSTEM_INSTRUCTIONS
+        user_content = self._build_user_content(request_text)
 
         for provider in self.providers:
             provider_name = provider.__class__.__name__
 
             try:
                 logger.info(f"Attempting extraction via {provider_name}...")
-                return provider.generate_schedule(prompt)
+                return provider.generate_schedule(system_instruction, user_content)
             except Exception as e:
                 logger.warning(
                     f"[{provider_name} Failed]: {str(e)}. Attempting fallback..."
