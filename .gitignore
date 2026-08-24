@@ -157,8 +157,8 @@ cython_debug/
 
 # AI Models
 # Ignore any directory named 'model' or 'models' anywhere in the project
-**/model/
-**/models/
+**models/model/
+**models/models/
 
 # Ignore Hugging Face cache directories
 **/.cache/huggingface/

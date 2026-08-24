@@ -69,8 +69,27 @@ class OpenRouterProvider(BaseLLMProvider):
         payload = {
             "model": self.model_name,
             "messages": [
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": user_content},
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": system_instruction,
+                            "cache_control": {
+                                "type": "ephemeral"
+                            },  # Explicit breakpoint
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": user_content,
+                        }
+                    ],
+                },
             ],
             "response_format": {
                 "type": "json_schema",
@@ -98,15 +117,42 @@ class OpenRouterProvider(BaseLLMProvider):
 # 3. GOOGLE PROVIDER
 # ==========================================
 class GoogleProvider(BaseLLMProvider):
-    def __init__(self, model_name: str = "gemini-2.5-flash-lite"):
+    def __init__(
+        self, model_name: str = "gemini-2.5-flash-lite", ttl_seconds: int = 300
+    ):
         self.api_key = os.environ.get("GEMINI_API_KEY")
         self.model_name = model_name
+        self.ttl_seconds = ttl_seconds
         self.client = self._init_client()
+        self.cached_content = None
 
     def _init_client(self) -> genai.Client | None:
         if self.api_key:
             return genai.Client(api_key=self.api_key)
         return None
+
+    def _get_or_create_cached_content(self, system_instruction: str):
+        """Creates or reuses explicit Gemini Cache with configurable TTL."""
+        if self.cached_content is not None:
+            try:
+                # Return existing active cache if valid
+                return self.cached_content.name
+            except Exception:
+                self.cached_content = None
+
+        logger.info(
+            f"Creating explicit Gemini cached content with TTL={self.ttl_seconds}s..."
+        )
+        # Create explicit cache via Google GenAI SDK
+        self.cached_content = self.client.caches.create(
+            model=self.model_name,
+            config=types.CreateCachedContentConfig(
+                contents=[system_instruction],
+                ttl=f"{self.ttl_seconds}s",
+                display_name="calendar_engine_system_instructions",
+            ),
+        )
+        return self.cached_content.name
 
     def generate_schedule(
         self, system_instruction: str, user_content: str
@@ -115,12 +161,15 @@ class GoogleProvider(BaseLLMProvider):
         if not self.api_key or not self.client:
             raise ValueError("GEMINI_API_KEY is missing or invalid.")
 
+        cache_name = self._get_or_create_cached_content(system_instruction)
+
         # Native schema enforcement via Google GenAI SDK
         # Pass static instructions into system_instruction field for API prompt caching
         response = self.client.models.generate_content(
             model=self.model_name,
             contents=user_content,
             config=types.GenerateContentConfig(
+                cached_content=cache_name,
                 response_mime_type="application/json",
                 response_schema=ScheduleCalendarEventFunction,
                 thinking_config=types.ThinkingConfig(

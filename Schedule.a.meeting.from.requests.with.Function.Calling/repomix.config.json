@@ -1,0 +1,16 @@
+{
+  "output": {
+    "filePath": "repomix-output.md",
+    "style": "markdown"
+  },
+  "ignore": {
+    "customPatterns": [
+      "**/static/**",
+      "**/env/**",
+      "**/venv/**",
+      "**/migrations/**",
+      "*.sqlite3",
+      "*.map"
+    ]
+  }
+}

@@ -1,17 +1,25 @@
+# utilities/securiyt.py
+
+# Example Generation
+# import secrets
+# print(secrets.token_hex(32)) # Generates 64 hex chars like: "a3f5b8..."
+
 import os
 import json
 import base64
+from config.settings import settings
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 
-# Master key loaded from environment variable
-MASTER_KEY_HEX = os.getenv("APP_MASTER_KEY")
-if not MASTER_KEY_HEX:
-    # Example generation: bytes.fromhex(AESGCM.generate_key(bit_length=256).hex())
-    raise RuntimeError("APP_MASTER_KEY environment variable is required!")
+from sqlalchemy import Text
+from sqlalchemy.types import TypeDecorator, Text
+from utilities.security import encrypt_envelope, decrypt_envelope
 
-MASTER_KEY = bytes.fromhex(MASTER_KEY_HEX)
+# Master key loaded
+# Guaranteed to be valid 32-bytes because Pydantic validated it on boot
+MASTER_KEY = bytes.fromhex(settings.security.app_master_key)
 
 
 def _get_kek(salt: bytes) -> AESGCM:
@@ -36,7 +44,7 @@ def encrypt_envelope(plaintext: str) -> str:
     # 1. Generate unique DEK and KEK derivation salt
     kek_salt = os.urandom(16)
     dek_raw = AESGCM.generate_key(bit_length=256)
-    
+
     # 2. Encrypt plaintext using DEK
     dek_cipher = AESGCM(dek_raw)
     data_nonce = os.urandom(12)
@@ -80,3 +88,20 @@ def decrypt_envelope(payload_json: str) -> str:
     plaintext_bytes = dek_cipher.decrypt(data_nonce, ciphertext, None)
 
     return plaintext_bytes.decode("utf-8")
+
+
+class EncryptedString(TypeDecorator):
+    """Transparently encrypts strings on save and decrypts on load."""
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            return encrypt_envelope(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            return decrypt_envelope(value)
+        return value
