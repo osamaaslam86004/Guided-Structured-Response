@@ -8,9 +8,13 @@ from pydantic import (
     PostgresDsn,
     RedisDsn,
     AnyHttpUrl,
+    HttpUrl,
+    SecretStr,
     Field,
     field_validator,
 )
+
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,11 +25,6 @@ class AppConfig(BaseModel):
     env: Literal["development", "staging", "production"] = "development"
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
-
-
-class JWTAuthConfig(BaseModel):
-    access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 7
 
 
 class SecurityConfig(BaseModel):
@@ -75,29 +74,66 @@ class DatabaseConfig(BaseModel):
 
 class RedisConfig(BaseModel):
     url: RedisDsn
+    sync_db: int = 0
+    async_db: int = 1
+    dlq_key: str = Field(
+        default="calendar_tasks:dead_letter",
+        description="Key used for pushing dead letter queue payloads",
+    )
+
+    @property
+    def url(self) -> str:
+        """Constructs a standard Redis connection URL.
+        Wehn to Use: celery_tasks, sync_background_workers, cli_scripts
+        """
+        return f"{self.url}/{self.sync_db}"
+
+    @property
+    def async_url(self) -> str:
+        """Constructs an async Redis connection URL if using redis-py async features.
+        Wehn to Use: FastAPI route handlers, Asyncio background loops
+        """
+        return f"{self.url}/{self.async_db}"
 
 
-# Email Configuration
-class EmailConfig(BaseModel):
-    smtp_host: str
-    smtp_port: int = 587
-    smtp_user: str
-    smtp_password: str
-    from_email: EmailStr
+# Google OAuth 2.0 Configuration
+class GoogleOAuthConfig(BaseModel):
+    client_id: str = Field(
+        ..., description="Google OAuth Client ID ending in .apps.googleusercontent.com"
+    )
+    client_secret: SecretStr = Field(
+        ..., description="Google OAuth Client Secret protected as a SecretStr"
+    )
+    redirect_url: HttpUrl = Field(
+        ...,
+        description="OAuth Redirect URI matching Google Cloud Console configuration",
+    )
+
+    @field_validator("client_id")
+    @classmethod
+    def validate_client_id(cls, v: str) -> str:
+        client_id = v.strip()
+        if not client_id.endswith(".apps.googleusercontent.com"):
+            raise ValueError(
+                "Invalid Google client_id: Must end with '.apps.googleusercontent.com'"
+            )
+        return client_id
 
 
-# STRIPE Configuration
-class StripeConfig(BaseModel):
-    secret_key: str
-    webhook_secret: str
+# 2. LLM Model Provider Configuration
+class LLMModelProviderConfig(BaseModel):
+    gemini_api_key: SecretStr = Field(..., description="Google Gemini API Key")
+    open_router_api_key: SecretStr = Field(
+        ..., description="OpenRouter API Key for fallback/multi-model routing"
+    )
 
-
-# AWS Configuration
-class AWSConfig(BaseModel):
-    s3_bucket_name: str
-    access_key_id: str
-    secret_access_key: str
-    region: str = "us-east-1"
+    @field_validator("gemini_api_key", "open_router_api_key")
+    @classmethod
+    def validate_api_keys(cls, v: SecretStr) -> SecretStr:
+        raw_key = v.get_secret_value().strip()
+        if not raw_key or len(raw_key) < 10:
+            raise ValueError("API Key appears invalid or too short.")
+        return v
 
 
 # Rate Limiting Configuration
@@ -113,7 +149,8 @@ class Settings(BaseSettings):
     security: SecurityConfig
     db: DatabaseConfig
     redis: RedisConfig
-    # stripe: StripeConfig
+    google_oauth: GoogleOAuthConfig
+    llm: LLMModelProviderConfig
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -123,6 +160,35 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+
+# # JET Auth
+# class JWTAuthConfig(BaseModel):
+#     access_token_expire_minutes: int = 30
+#     refresh_token_expire_days: int = 7
+
+
+# # Email Configuration
+# class EmailConfig(BaseModel):
+#     smtp_host: str
+#     smtp_port: int = 587
+#     smtp_user: str
+#     smtp_password: str
+#     from_email: EmailStr
+
+
+# # STRIPE Configuration
+# class StripeConfig(BaseModel):
+#     secret_key: str
+#     webhook_secret: str
+
+
+# # AWS Configuration
+# class AWSConfig(BaseModel):
+#     s3_bucket_name: str
+#     access_key_id: str
+#     secret_access_key: str
+#     region: str = "us-east-1"
 
 
 @lru_cache

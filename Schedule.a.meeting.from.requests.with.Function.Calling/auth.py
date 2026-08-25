@@ -1,11 +1,12 @@
 # auth.py
-# This file contains the authentication logic for the FastAPI application. 
+# This file contains the authentication logic for the FastAPI application.
 # It includes a dependency function to retrieve the current authenticated user from the session.
 
 from fastapi import HTTPException, Request
 from sqlalchemy import select
 
-from database import AsyncSessionLocal, UserDB
+from config.database import AsyncSessionLocal
+from models.user_db import UserDB
 
 
 async def get_current_user(
@@ -22,11 +23,7 @@ async def get_current_user(
 
     async with AsyncSessionLocal() as session:
 
-        result = await session.execute(
-            select(UserDB).where(
-                UserDB.id == user_id
-            )
-        )
+        result = await session.execute(select(UserDB).where(UserDB.id == user_id))
 
         user = result.scalar_one_or_none()
 

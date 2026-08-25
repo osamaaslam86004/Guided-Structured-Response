@@ -3,20 +3,14 @@
 # This file contains the WebSocket endpoint for streaming task events to clients in real-time.
 
 
-import asyncio
 import json
-import os
-
-import redis.asyncio as redis
+import redis.asyncio as aioredis
 
 from fastapi import APIRouter, WebSocket
 from fastapi import WebSocketDisconnect
+from config.settings import settings
 
 router = APIRouter()
-
-
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 
 @router.websocket("/ws/events/{task_id}")
@@ -38,47 +32,37 @@ async def task_events(
 
     await websocket.accept()
 
-    client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=3,
+    # Initialize Async Redis Client
+    redis_client = aioredis.from_url(
+        settings.redis.async_url,
+        db=settings.redis.async_db,
         decode_responses=True,
     )
 
-    pubsub = client.pubsub()
+    pubsub = redis_client.pubsub()
 
     channel = f"task_events:{task_id}"
 
     await pubsub.subscribe(channel)
 
     try:
+        # Non-blocking async loop using pubsub.listen()
+        async for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
 
-        while True:
+            data = json.loads(message["data"])
+            await websocket.send_json(data)
 
-            message = await pubsub.get_message(
-                ignore_subscribe_messages=True,
-                timeout=1.0,
-            )
-
-            if message:
-
-                data = json.loads(message["data"])
-
-                await websocket.send_json(data)
-
-                if data.get("type") in {"TASK_COMPLETED", "TASK_DEAD_LETTER"}:
-                    break
-
-            await asyncio.sleep(0.05)
+            # Close socket loop on terminal task states
+            if data.get("type") in {"TASK_COMPLETED", "TASK_DEAD_LETTER"}:
+                break
 
     except WebSocketDisconnect:
-
         pass
 
     finally:
-
+        # Graceful async cleanup
         await pubsub.unsubscribe(channel)
-
         await pubsub.close()
-
-        await client.close()
+        await redis_client.close()

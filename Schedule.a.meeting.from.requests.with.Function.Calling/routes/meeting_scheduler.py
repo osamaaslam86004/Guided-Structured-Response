@@ -5,14 +5,13 @@
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user
-from database import UserDB
+from models.user_db import UserDB
 from schemas import (
     TaskStatusResponse,
     UserScheduleRequest,
 )
 
-from tasks import execute_calendar_schedule_task
-
+from tasks.google_calender_meeting import execute_calendar_schedule_task
 
 router = APIRouter()
 
@@ -35,4 +34,3 @@ async def async_schedule_meeting(
         task_id=task.id,
         status="PENDING",
     )
-

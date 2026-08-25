@@ -4,7 +4,6 @@
 import json
 import os
 import uuid
-import redis
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -15,14 +14,8 @@ from googleapiclient.discovery import build
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import OAuthTokenDB
-
-# Initialize Redis client
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-redis_client = redis.Redis(
-    host=REDIS_HOST, port=REDIS_PORT, db=2, decode_responses=True
-)
+from utilities.cache import get_cached_function_call, set_cached_function_call
+from models.auth_db import OAuthTokenDB
 
 CACHE_TTL_SECONDS = 3600  # 1 hour cache window
 DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -41,7 +34,7 @@ class GoogleCalendarService:
         cache_key = f"google_oauth_token:{self.user_id}"
 
         # Step 1: Check Redis Cache
-        cached_token_data = redis_client.get(cache_key)
+        cached_token_data = await get_cached_function_call(cache_key)
         token_dict = None
 
         if cached_token_data:
@@ -109,7 +102,11 @@ class GoogleCalendarService:
             }
 
             # Write back to Redis Cache
-            redis_client.set(cache_key, json.dumps(cache_payload), ex=CACHE_TTL_SECONDS)
+            await set_cached_function_call(
+                cache_key=cache_key,
+                data=cache_payload,
+                expire_seconds=CACHE_TTL_SECONDS,
+            )
 
         return credentials
 

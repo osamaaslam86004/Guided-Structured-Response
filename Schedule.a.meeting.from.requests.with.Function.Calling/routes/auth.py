@@ -1,6 +1,6 @@
 # routes/auth.py
-# This file handles the OAuth2 authentication flow with Google, including login, callback, 
-# and logout endpoints. It uses FastAPI's APIRouter to define the routes and SQLAlchemy for 
+# This file handles the OAuth2 authentication flow with Google, including login, callback,
+# and logout endpoints. It uses FastAPI's APIRouter to define the routes and SQLAlchemy for
 # database interactions.
 
 # This replaces the manual seed_oauth_token.py approach
@@ -18,12 +18,9 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from sqlalchemy import select
 
-from database import (
-    AsyncSessionLocal,
-    UserDB,
-    OAuthTokenDB,
-)
-
+from config.database import AsyncSessionLocal
+from models.user_db import UserDB
+from models.auth_db import OAuthTokenDB
 
 router = APIRouter(
     prefix="/auth",
@@ -34,17 +31,11 @@ router = APIRouter(
 GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 
-GOOGLE_REDIRECT_URI = os.environ[
-    "GOOGLE_REDIRECT_URI"
-]
+GOOGLE_REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
 
-GOOGLE_AUTH_URL = (
-    "https://accounts.google.com/o/oauth2/v2/auth"
-)
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 
-GOOGLE_TOKEN_URL = (
-    "https://oauth2.googleapis.com/token"
-)
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 SCOPES = [
     "openid",
@@ -71,10 +62,7 @@ async def login(request: Request):
         "state": state,
     }
 
-    url = (
-        f"{GOOGLE_AUTH_URL}?"
-        f"{urlencode(params)}"
-    )
+    url = f"{GOOGLE_AUTH_URL}?" f"{urlencode(params)}"
 
     return RedirectResponse(url)
 
@@ -118,9 +106,7 @@ async def callback(
     token_data = response.json()
 
     access_token = token_data["access_token"]
-    refresh_token = token_data.get(
-        "refresh_token"
-    )
+    refresh_token = token_data.get("refresh_token")
 
     # Verify Google identity.
     id_info = id_token.verify_oauth2_token(
@@ -135,9 +121,7 @@ async def callback(
     async with AsyncSessionLocal() as session:
 
         result = await session.execute(
-            select(UserDB).where(
-                UserDB.google_sub == google_sub
-            )
+            select(UserDB).where(UserDB.google_sub == google_sub)
         )
 
         user = result.scalar_one_or_none()
@@ -161,9 +145,7 @@ async def callback(
             user.picture = id_info.get("picture")
 
         result = await session.execute(
-            select(OAuthTokenDB).where(
-                OAuthTokenDB.user_id == user.id
-            )
+            select(OAuthTokenDB).where(OAuthTokenDB.user_id == user.id)
         )
 
         token = result.scalar_one_or_none()
@@ -186,9 +168,7 @@ async def callback(
             token.access_token = access_token
 
             if refresh_token:
-                token.refresh_token = (
-                    refresh_token
-                )
+                token.refresh_token = refresh_token
 
         await session.commit()
 
@@ -209,6 +189,4 @@ async def logout(request: Request):
 
     request.session.clear()
 
-    return {
-        "authenticated": False
-    }
+    return {"authenticated": False}

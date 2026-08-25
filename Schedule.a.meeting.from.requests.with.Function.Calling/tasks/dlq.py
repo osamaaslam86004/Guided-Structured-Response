@@ -1,12 +1,11 @@
 # dlq.py
 
 import json
-import os
 import redis
-from datetime import datetime, timezone
 from config.settings import settings
+from datetime import datetime, timezone
 
-# Initialize Sync Redis Client using centralized Redis settings
+# Synchronous Redis client for error handlers running outside asyncio.run()
 redis_client = redis.Redis.from_url(settings.redis.url, decode_responses=True)
 
 

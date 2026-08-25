@@ -1,6 +1,5 @@
 # main.py
 
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config.settings import settings
 from config.logging_config import setup_logging
 
-from config.database import init_db, close_db
+from config.database import close_db
 
 from routes.auth import router as auth_router
 from routes.event_parser import event_parser_router
@@ -24,11 +23,9 @@ setup_logging(log_level=settings.app.log_level, environment=settings.app.env)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
-    await init_db()
-
+    # Startup: Run any startup tasks (e.g., warm up Redis cache)
     yield
-
+    # Shutdown: Clean up connection pools gracefully
     await close_db()
 
 

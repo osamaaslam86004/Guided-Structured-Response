@@ -1,24 +1,20 @@
 import hashlib
 import json
-import os
 from typing import Optional
-import redis
+import redis.asyncio as aioredis
+from config.settings import settings
 
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-
-redis_client = redis.Redis(
-    host=REDIS_HOST, port=REDIS_PORT, db=1, decode_responses=True
-)
+# Async Redis Client
+redis_client = aioredis.from_url(settings.redis.async_url, decode_responses=True)
 
 
 def generate_cache_key(request_text: str) -> str:
     return f"cal_schedule:{hashlib.md5(request_text.strip().encode()).hexdigest()}"
 
 
-def get_cached_function_call(cache_key: str) -> Optional[dict]:
+async def get_cached_function_call(cache_key: str) -> Optional[dict]:
     try:
-        cached_data = redis_client.get(cache_key)
+        cached_data = await redis_client.get(cache_key)
         if cached_data:
             return json.loads(cached_data)
     except Exception as e:
@@ -26,9 +22,11 @@ def get_cached_function_call(cache_key: str) -> Optional[dict]:
     return None
 
 
-def set_cached_function_call(cache_key: str, data: dict, expire_seconds: int = 86400):
+async def set_cached_function_call(
+    cache_key: str, data: dict, expire_seconds: int = 86400
+):
     try:
-        redis_client.set(
+        await redis_client.set(
             cache_key,
             json.dumps(data),
             ex=expire_seconds,

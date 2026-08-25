@@ -15,14 +15,14 @@ from sqlalchemy.ext.asyncio import (
 from celery_app import celery_app
 from models.google_calender_db import CalendarEventDB
 from engine import get_calendar_engine
-from events import publish_task_event
+from tasks.events import publish_task_event
 from services.google_calender import get_gcal_service
 from dlq import push_dead_letter
 
 TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 
 # 1. Reuse central settings to resolve database URL and async driver
-ASYNC_DB_URL = str(settings.db.url)
+ASYNC_DB_URL = str(settings.db.sync_url)
 
 # Worker-level engine instance (Reused across task runs within the same worker process)
 _worker_engine: AsyncEngine | None = None
