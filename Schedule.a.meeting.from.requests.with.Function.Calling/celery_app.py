@@ -1,15 +1,15 @@
 import os
 from celery import Celery
+from config.settings import settings
 
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = os.getenv("REDIS_PORT", "6379")
-REDIS_URL = (f"redis://{REDIS_HOST}:{REDIS_PORT}/0")
-
+# Use the formatted string URL from central settings
+REDIS_URL = settings.redis.url
 
 celery_app = Celery(
     "calendar_tasks",
     broker=REDIS_URL,
     backend=REDIS_URL,
+    include=["tasks.google_calender_meeting"],
 )
 
 celery_app.conf.update(
