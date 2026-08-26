@@ -73,7 +73,7 @@ class DatabaseConfig(BaseModel):
 
 
 class RedisConfig(BaseModel):
-    dsn: RedisDsn = Field(alias="url")
+    base_url: RedisDsn = Field(alias="url")
     sync_db: int = 0
     async_db: int = 1
     dlq_key: str = Field(
@@ -86,14 +86,17 @@ class RedisConfig(BaseModel):
         """Constructs a standard Redis connection URL.
         Wehn to Use: celery_tasks, sync_background_workers, cli_scripts
         """
-        return f"{self.url}/{self.sync_db}"
+        # Strip trailing slash if Pydantic added one
+        clean_url = str(self.base_url).rstrip("/")
+        return f"{clean_url}/{self.sync_db}"
 
     @property
     def async_url(self) -> str:
         """Constructs an async Redis connection URL if using redis-py async features.
         Wehn to Use: FastAPI route handlers, Asyncio background loops
         """
-        return f"{self.url}/{self.async_db}"
+        clean_url = str(self.base_url).rstrip("/")
+        return f"{clean_url}/{self.async_db}"
 
 
 # Google OAuth 2.0 Configuration
