@@ -4,7 +4,6 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 import httpx
-from dotenv import load_dotenv
 
 # Google SDK imports
 from google import genai
@@ -17,7 +16,6 @@ from huggingface_hub import hf_hub_download
 
 from schemas import ScheduleCalendarEventFunction
 
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 
@@ -49,7 +47,7 @@ class BaseLLMProvider(ABC):
 # ==========================================
 class OpenRouterProvider(BaseLLMProvider):
     def __init__(self, model_name: str = "google/gemini-2.5-flash-lite"):
-        self.api_key = os.environ.get("OPENROUTER_API_KEY")
+        self.api_key = settings.llm.open_router_api_key.get_secret_value()
         self.model_name = model_name
 
     def generate_schedule(
@@ -120,7 +118,8 @@ class GoogleProvider(BaseLLMProvider):
     def __init__(
         self, model_name: str = "gemini-2.5-flash-lite", ttl_seconds: int = 300
     ):
-        self.api_key = os.environ.get("GEMINI_API_KEY")
+       
+        self.api_key = settings.llm.gemini_api_key.get_secret_value()
         self.model_name = model_name
         self.ttl_seconds = ttl_seconds
         self.client = self._init_client()
