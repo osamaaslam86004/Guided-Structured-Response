@@ -73,7 +73,7 @@ class DatabaseConfig(BaseModel):
 
 
 class RedisConfig(BaseModel):
-    url: RedisDsn
+    dsn: RedisDsn = Field(alias="url")
     sync_db: int = 0
     async_db: int = 1
     dlq_key: str = Field(
