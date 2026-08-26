@@ -262,7 +262,9 @@ class CalendarFunctionEngine:
     ) -> ScheduleCalendarEventFunction:
 
         system_instruction = STATIC_SYSTEM_INSTRUCTIONS
-        user_content = self._build_user_content(request_text)
+
+        # Change _build_user_content to _build_prompt
+        user_content = self._build_prompt(request_text)
 
         for provider in self.providers:
             provider_name = provider.__class__.__name__
