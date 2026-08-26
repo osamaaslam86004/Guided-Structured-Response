@@ -16,7 +16,7 @@ from celery_app import celery_app
 from models.google_calender_db import CalendarEventDB
 from engine import get_calendar_engine
 from tasks.events import publish_task_event
-from services.google_calender import get_gcal_service
+from services.google_calender import service
 from dlq import push_dead_letter
 
 TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
