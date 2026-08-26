@@ -26,7 +26,7 @@ TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 ASYNC_DB_URL = str(settings.db.async_url)
 
 
-def get_task_sessionmaker() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]:
+def get_task_sessionmaker() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
     """
     Creates an async engine and sessionmaker per task execution using NullPool.
     Prevents cross-event-loop connection contamination when using asyncio.run().
@@ -88,9 +88,9 @@ async def _execute_schedule(
         async with _worker_sessionmaker() as session:
 
             # Ensure gcal_service uses the task-scoped DB session
-            gcal_service = await get_gcal_service(user_id=user_id, session=session)
+            gcal_service = get_gcal_service(user_id=user_id, session=session)
 
-            gcal_response = await gcal_service.create_event_with_meet(func_call)
+            gcal_response = gcal_service.create_event_with_meet(func_call)
             meeting_link = gcal_response.get("meeting_link")
 
             record = CalendarEventDB(
