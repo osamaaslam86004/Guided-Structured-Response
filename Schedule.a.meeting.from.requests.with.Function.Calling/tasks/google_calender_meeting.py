@@ -19,6 +19,7 @@ from engine import get_calendar_engine
 from tasks.events import publish_task_event
 from services.google_calender.service import get_gcal_service
 from dlq import push_dead_letter
+from config.cache import close_redis
 
 TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 
@@ -88,10 +89,10 @@ async def _execute_schedule(
         async with _worker_sessionmaker() as session:
 
             # Ensure gcal_service uses the task-scoped DB session
-            gcal_service = get_gcal_service(user_id=user_id, session=session)
+            gcal_service = await get_gcal_service(user_id=user_id, session=session)
 
             gcal_response = gcal_service.create_event_with_meet(func_call)
-            meeting_link = gcal_response.get("meeting_link")
+            meeting_link = await gcal_response.get("meeting_link")
 
             record = CalendarEventDB(
                 user_id=user_id,
@@ -127,8 +128,10 @@ async def _execute_schedule(
         return result
 
     finally:
-        # Crucial: Dispose of the engine before asyncio.run() closes the loop
+        # 1. Crucial: Dispose of the engine before asyncio.run() closes the loop
         await _worker_engine.dispose()
+        # 2. Cleanly close globally defined Redis connection & reset singleton for next task
+        await close_redis()
 
 
 @celery_app.task(

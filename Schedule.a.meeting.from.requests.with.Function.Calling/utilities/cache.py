@@ -1,11 +1,7 @@
 import hashlib
 import json
 from typing import Optional
-import redis.asyncio as aioredis
-from config.settings import settings
-
-# Async Redis Client
-redis_client = aioredis.from_url(settings.redis.async_url, decode_responses=True)
+from config.cache import get_redis_client
 
 
 def generate_cache_key(request_text: str) -> str:
@@ -14,7 +10,11 @@ def generate_cache_key(request_text: str) -> str:
 
 async def get_cached_function_call(cache_key: str) -> Optional[dict]:
     try:
+        # Async Redis Client
+        redis_client = await get_redis_client()
+
         cached_data = await redis_client.get(cache_key)
+
         if cached_data:
             return json.loads(cached_data)
     except Exception as e:
@@ -26,6 +26,7 @@ async def set_cached_function_call(
     cache_key: str, data: dict, expire_seconds: int = 86400
 ):
     try:
+        redis_client = await get_redis_client()
         await redis_client.set(
             cache_key,
             json.dumps(data),
