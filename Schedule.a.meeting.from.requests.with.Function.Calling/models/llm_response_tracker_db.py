@@ -16,7 +16,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Text, DateTime, JSON, Float, Integer, Boolean, Index
 from sqlalchemy.types import TypeDecorator, Text
 from models.base import Base
-from utilities.security import encrypt_envelope, decrypt_envelope
+from utilities.security import encrypt_envelope, decrypt_envelope, EncryptedString
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
