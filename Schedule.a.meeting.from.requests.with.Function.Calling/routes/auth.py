@@ -11,6 +11,7 @@ import secrets
 from urllib.parse import urlencode
 
 import httpx
+from config.settings import settings
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse
@@ -28,10 +29,9 @@ router = APIRouter(
 )
 
 
-GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
-GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
-
-GOOGLE_REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
+GOOGLE_CLIENT_ID = settings.google_oauth.client_id
+GOOGLE_CLIENT_SECRET = settings.google_oauth.client_secret.get_secret_value()
+GOOGLE_REDIRECT_URI = str(settings.google_oauth.redirect_url)
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 
