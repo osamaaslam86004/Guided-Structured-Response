@@ -50,8 +50,7 @@ app.add_middleware(
     allow_origins=[str(origin) for origin in settings.security.allow_origins],
     allow_credentials=settings.security.allow_credentials,
     allow_methods=settings.security.allow_methods,
-    allow_headers=settings.security.allow_headers,
-    allow_credentials=True,
+    allow_headers=settings.security.allow_headers
 )
 
 app.include_router(auth_router)
