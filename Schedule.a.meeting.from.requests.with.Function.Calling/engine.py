@@ -14,6 +14,7 @@ from llama_cpp import Llama
 import outlines
 from huggingface_hub import hf_hub_download
 
+from config.settings import settings
 from schemas import ScheduleCalendarEventFunction
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,7 @@ class GoogleProvider(BaseLLMProvider):
     def __init__(
         self, model_name: str = "gemini-2.5-flash-lite", ttl_seconds: int = 300
     ):
-       
+
         self.api_key = settings.llm.gemini_api_key.get_secret_value()
         self.model_name = model_name
         self.ttl_seconds = ttl_seconds
@@ -209,7 +210,7 @@ class LocalLlamaProvider(BaseLLMProvider):
                 repo_id=self.repo_id,
                 filename=self.filename,
                 cache_dir=self.cache_dir,
-                token=os.environ.get("HF_TOKEN"),
+                token=settings.llm.hf__token.get_secret_value(),
             )
 
             llm = Llama(model_path=model_path, n_ctx=2048, n_threads=n_threads)
