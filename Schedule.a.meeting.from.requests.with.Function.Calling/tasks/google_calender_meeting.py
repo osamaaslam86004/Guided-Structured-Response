@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from celery_app import celery_app
 from models.google_calender_db import CalendarEventDB
@@ -24,39 +25,20 @@ TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 # 1. Reuse central settings to resolve database URL and async driver
 ASYNC_DB_URL = str(settings.db.async_url)
 
-# Worker-level engine instance (Reused across task runs within the same worker process)
-_worker_engine: AsyncEngine | None = None
-_worker_sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
-
-def get_task_sessionmaker() -> async_sessionmaker[AsyncSession]:
+def get_task_sessionmaker() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]:
     """
-    Lazily instantiates and caches the AsyncEngine for the Celery process.
-    Eliminates engine creation overhead on every task run.
-
-    Since Celery worker processes execute multiple tasks over their lifecycle,
-    creating a module-level or worker-scoped engine backed by asyncpg avoids
-    re-authenticating and rebuilding the connection engine on every run
-
-    Connection Pooling: Instead of creating and disposing an engine per task (poolclass=NullPool),
-    the module caches _worker_engine using standard connection pooling parameters
-    (pool_size, max_overflow).
+    Creates an async engine and sessionmaker per task execution using NullPool.
+    Prevents cross-event-loop connection contamination when using asyncio.run().
     """
-    global _worker_engine, _worker_sessionmaker
-    if _worker_engine is None:
-        _worker_engine = create_async_engine(
-            ASYNC_DB_URL,
-            pool_pre_ping=True,
-            pool_size=settings.db.pool_size,
-            max_overflow=settings.db.max_overflow,
-            pool_recycle=1800,
-        )
-        _worker_sessionmaker = async_sessionmaker(
-            _worker_engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
-    return _worker_sessionmaker
+
+    _worker_engine = create_async_engine(ASYNC_DB_URL, poolclass=NullPool)
+    _worker_sessionmaker = async_sessionmaker(
+        _worker_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    return _worker_engine, _worker_sessionmaker
 
 
 async def _execute_schedule(
@@ -75,7 +57,7 @@ async def _execute_schedule(
     `attached to a different loop`).
     """
 
-    TaskAsyncSession = get_task_sessionmaker()
+    _worker_engine, _worker_sessionmaker = get_task_sessionmaker()
 
     publish_task_event(
         task_id,
@@ -101,47 +83,52 @@ async def _execute_schedule(
         {"type": "GOOGLE_CALENDAR_STARTED", "task_id": task_id},
     )
 
-    # Persist record using task-scoped async session from pooled engine
-    async with TaskAsyncSession() as session:
+    try:
+        # Persist record using task-scoped async session from pooled engine
+        async with _worker_sessionmaker() as session:
 
-        # Ensure gcal_service uses the task-scoped DB session
-        gcal_service = await get_gcal_service(user_id=user_id, session=session)
+            # Ensure gcal_service uses the task-scoped DB session
+            gcal_service = await get_gcal_service(user_id=user_id, session=session)
 
-        gcal_response = await gcal_service.create_event_with_meet(func_call)
-        meeting_link = gcal_response.get("meeting_link")
+            gcal_response = await gcal_service.create_event_with_meet(func_call)
+            meeting_link = gcal_response.get("meeting_link")
 
-        record = CalendarEventDB(
-            user_id=user_id,
-            task_id=task_id,
-            request_text=request_text,
-            summary=func_call.summary,
-            start_time=func_call.start.date_time,
-            end_time=func_call.end.date_time,
-            attendees=[str(email) for email in func_call.attendees],
-            meeting_link=meeting_link,
-            google_event_id=gcal_response.get("event_id"),
-            status=gcal_response.get("status", "scheduled"),
-            raw_function_call=func_call.model_dump(),
+            record = CalendarEventDB(
+                user_id=user_id,
+                task_id=task_id,
+                request_text=request_text,
+                summary=func_call.summary,
+                start_time=func_call.start.date_time,
+                end_time=func_call.end.date_time,
+                attendees=[str(email) for email in func_call.attendees],
+                meeting_link=meeting_link,
+                google_event_id=gcal_response.get("event_id"),
+                status=gcal_response.get("status", "scheduled"),
+                raw_function_call=func_call.model_dump(),
+            )
+            session.add(record)
+            await session.commit()
+
+        result = {
+            "function_call": func_call.model_dump(),
+            "google_calendar_event": gcal_response,
+            "meeting_link": meeting_link,
+        }
+
+        publish_task_event(
+            task_id,
+            {
+                "type": "TASK_COMPLETED",
+                "task_id": task_id,
+                "result": result,
+            },
         )
-        session.add(record)
-        await session.commit()
 
-    result = {
-        "function_call": func_call.model_dump(),
-        "google_calendar_event": gcal_response,
-        "meeting_link": meeting_link,
-    }
+        return result
 
-    publish_task_event(
-        task_id,
-        {
-            "type": "TASK_COMPLETED",
-            "task_id": task_id,
-            "result": result,
-        },
-    )
-
-    return result
+    finally:
+        # Crucial: Dispose of the engine before asyncio.run() closes the loop
+        await _worker_engine.dispose()
 
 
 @celery_app.task(
