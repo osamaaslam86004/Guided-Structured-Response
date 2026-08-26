@@ -144,8 +144,12 @@ class LLMModelProviderConfig(BaseModel):
     open_router_api_key: SecretStr = Field(
         ..., description="OpenRouter API Key for fallback/multi-model routing"
     )
-    hf__token: SecretStr = Field(
-        ..., description="hugging_face authentication key / api key"
+    # Add hf_token with alias matching HF__TOKEN from your .env
+    hf_token: SecretStr | None = Field(
+        default=None,
+        alias="hf_token",
+        validation_alias="HF__TOKEN",
+        description="HuggingFace API Token",
     )
 
     @field_validator("gemini_api_key", "open_router_api_key")
