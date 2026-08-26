@@ -15,7 +15,6 @@ from cryptography.hazmat.primitives import hashes
 
 from sqlalchemy import Text
 from sqlalchemy.types import TypeDecorator, Text
-from utilities.security import encrypt_envelope, decrypt_envelope
 
 # Master key loaded
 # Guaranteed to be valid 32-bytes because Pydantic validated it on boot
