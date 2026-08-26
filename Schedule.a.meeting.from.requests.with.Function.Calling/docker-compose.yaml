@@ -48,7 +48,7 @@ services:
 
   celery_worker:
     <<: *app-service
-    command: ["celery", "-A", "tasks.celery_app", "worker", "--loglevel=info", "-Q", "calendar", "-c", "1"]
+    command: celery -A celery_app.celery_app worker --loglevel=info -Q calendar
 
 volumes:
   postgres_data:
