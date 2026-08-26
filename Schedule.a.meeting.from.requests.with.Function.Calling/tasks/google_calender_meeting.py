@@ -22,7 +22,7 @@ from dlq import push_dead_letter
 TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 
 # 1. Reuse central settings to resolve database URL and async driver
-ASYNC_DB_URL = str(settings.db.sync_url)
+ASYNC_DB_URL = str(settings.db.async_url)
 
 # Worker-level engine instance (Reused across task runs within the same worker process)
 _worker_engine: AsyncEngine | None = None
