@@ -16,6 +16,8 @@ from routes.event_parser import event_parser_router
 from routes.meeting_scheduler import router as meeting_scheduler_router
 from routes.task_status import router as task_status_router
 from routes.websocket_events import router as websocket_router
+from routes.admin_analytics import router as admin_analytics_router
+
 
 # Initialize global logging before creating the app
 setup_logging(log_level=settings.app.log_level, environment=settings.app.env)
@@ -58,3 +60,4 @@ app.include_router(event_parser_router)
 app.include_router(meeting_scheduler_router)
 app.include_router(task_status_router)
 app.include_router(websocket_router)
+app.include_router(admin_analytics_router)
