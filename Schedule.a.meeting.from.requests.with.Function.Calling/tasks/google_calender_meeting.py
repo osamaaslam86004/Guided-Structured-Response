@@ -91,8 +91,8 @@ async def _execute_schedule(
             # Ensure gcal_service uses the task-scoped DB session
             gcal_service = await get_gcal_service(user_id=user_id, session=session)
 
-            gcal_response = gcal_service.create_event_with_meet(func_call)
-            meeting_link = await gcal_response.get("meeting_link")
+            gcal_response = await gcal_service.create_event_with_meet(func_call)
+            meeting_link = gcal_response.get("meeting_link")
 
             record = CalendarEventDB(
                 user_id=user_id,
