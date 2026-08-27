@@ -7,14 +7,24 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
-# 1. Import your central Base and models so Alembic can detect them
-from database import Base, DATABASE_URL  # Import DATABASE_URL from database.py
-import database  # Registers UserDB, OAuthTokenDB, CalendarEventDB
-import services.usage_tracker.database  # Registers LLMUsageLogDB
+# --- CUSTOM IMPORTS ---
+from config.settings import settings
+
+# Import your Base model metadata here
+from models.base import Base
+
+# Make sure to import all your DB models so Base.metadata populates properly!
+import models.google_calender_db
+import models.auth_db
+import models.user_db
+import models.llm_response_tracker_db
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+# Dynamically set the database URL from your settings (uses async driver)
+config.set_main_option("sqlalchemy.url", str(settings.db.async_url))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -25,7 +35,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
-target_metadata = None
+target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
