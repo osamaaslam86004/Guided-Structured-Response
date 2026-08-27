@@ -1,28 +1,13 @@
-# database.py
-# This moves the service from file-based SQLite to PostgreSQL using SQLAlchemy's
-# async engine and asyncpg
+# models/auth_db.py
 
 import os
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String, Text, DateTime, JSON, Float, Integer, Boolean, Index
-from sqlalchemy.types import TypeDecorator, Text
-
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import String, DateTime, JSON, Index
 from models.base import Base
-from utilities.security import encrypt_envelope, decrypt_envelope, EncryptedString
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/calendar_service",
-)
+from utilities.security import EncryptedString
 
 
 class OAuthTokenDB(Base):

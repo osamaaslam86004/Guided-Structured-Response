@@ -1,27 +1,13 @@
-# database.py
-# This moves the service from file-based SQLite to PostgreSQL using SQLAlchemy's
-# async engine and asyncpg
+# models/llm_response_tracker_db.py
 
 import os
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String, Text, DateTime, JSON, Float, Integer, Boolean, Index
-from sqlalchemy.types import TypeDecorator, Text
+from sqlalchemy.types import Text
 from models.base import Base
-from utilities.security import encrypt_envelope, decrypt_envelope, EncryptedString
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/calendar_service",
-)
 
 
 class LLMUsageLogDB(Base):
@@ -59,18 +45,3 @@ class LLMUsageLogDB(Base):
         Index("ix_usage_provider_cache", "provider", "cache_hit"),
         Index("ix_usage_created_provider", "created_at", "provider"),
     )
-
-
-engine: AsyncEngine = create_async_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_recycle=1800,
-)
-
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
