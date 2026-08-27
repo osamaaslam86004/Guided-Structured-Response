@@ -4,7 +4,8 @@ x-app-service: &app-service
   env_file:
     - .env
   environment:
-    DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/calendar_service
+    DB__ASYNC_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/calendar_service
+    DB__SYNC_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/calendar_service
     REDIS_HOST: redis
     REDIS_PORT: "6379"
   depends_on:
