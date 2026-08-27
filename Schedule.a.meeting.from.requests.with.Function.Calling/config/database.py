@@ -47,9 +47,9 @@ SyncSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_eng
 # --- INITIALIZATION UTILS ---
 
 
-async def init_db() -> None:
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+# async def init_db() -> None:
+#     async with async_engine.begin() as conn:
+#         await conn.run_sync(Base.metadata.create_all)
 
 
 async def close_db() -> None:
