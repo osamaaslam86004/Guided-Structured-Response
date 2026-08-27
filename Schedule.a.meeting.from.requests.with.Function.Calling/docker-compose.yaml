@@ -17,7 +17,8 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    - "5432:5432" # to connect to DBeaver
+    ports:
+      - "5432:5432" # to connect to DBeaver
     environment:
       POSTGRES_DB: calendar_service
       POSTGRES_USER: postgres
