@@ -1,6 +1,7 @@
 import os
 import math
 import logging
+import outlines
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 import httpx
@@ -11,7 +12,7 @@ from google.genai import types
 
 # Local Llama imports
 from llama_cpp import Llama
-import outlines
+from outlines.templates import Template
 from huggingface_hub import hf_hub_download
 
 from config.settings import settings
@@ -21,15 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 # Static System Instructions (Exact string match across all calls for Maximum Cache Hits)
-STATIC_SYSTEM_INSTRUCTIONS = (
-    "You are an AI calendar assistant. Convert user scheduling requests into structured Google Calendar event JSON arguments.\n\n"
-    "CRITICAL RULES:\n"
-    "1. Calculate start and end dates relative to the provided CURRENT DATETIME REFERENCE.\n"
-    "2. 'tomorrow' means the day immediately following the provided CURRENT DATE.\n"
-    "3. Ensure 'start.date_time' and 'end.date_time' are valid ISO 8601 strings (YYYY-MM-DDTHH:MM:SSZ).\n"
-    "4. Calculate end time by adding the duration to the start time.\n"
-    "5. If a time slot or duration is missing or ambiguous, ask the user or infer sensible defaults strictly adhering to the schema."
-)
+# Templates loaded from files
+system_instruction = Template.from_file("utilities/templates/system_prompt.txt")
 
 
 # ==========================================
@@ -108,8 +102,28 @@ class OpenRouterProvider(BaseLLMProvider):
             )
             response.raise_for_status()
             result = response.json()
+
+            logger.info(result)
+
+            # return raw token metrics from response objects
+            # without doing cost calculations inside
+            usage = result.get("usage", {})
+
+            logger.info(usage)
+
+            meta = {
+                "provider": "openrouter",
+                "model_name": self.model_name,
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "cached_tokens": usage.get("prompt_tokens_details", {}).get(
+                    "cached_tokens", 0
+                ),
+                "raw_meta": {"id": result.get("id")},
+            }
             raw_content = result["choices"][0]["message"]["content"]
-            return ScheduleCalendarEventFunction.model_validate_json(raw_content)
+
+            return ScheduleCalendarEventFunction.model_validate_json(raw_content), meta
 
 
 # ==========================================
@@ -260,8 +274,6 @@ class CalendarFunctionEngine:
     def extract_calendar_function(
         self, request_text: str
     ) -> ScheduleCalendarEventFunction:
-
-        system_instruction = STATIC_SYSTEM_INSTRUCTIONS
 
         # Change _build_user_content to _build_prompt
         user_content = self._build_prompt(request_text)

@@ -1,9 +1,12 @@
 # tasks.py
 
 import asyncio
-from config.settings import settings
+import time
+import logging
 
+from outlines.templates import Template
 from celery.exceptions import MaxRetriesExceededError
+from celery_app import celery_app
 from googleapiclient.errors import HttpError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -12,16 +15,24 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
+from sqlalchemy.exc import SQLAlchemyError
+from dlq import push_dead_letter
 
-from celery_app import celery_app
+from config.cache import close_redis
+from config.settings import settings
 from models.google_calender_db import CalendarEventDB
+from services.usage_tracker.service import UsageTrackerService
 from engine import get_calendar_engine
 from tasks.events import publish_task_event
 from services.google_calender.service import get_gcal_service
-from dlq import push_dead_letter
-from config.cache import close_redis
+
+# Initialize module logger
+logger = logging.getLogger(__name__)
+
 
 TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
+
+STATIC_SYSTEM_INSTRUCTIONS = Template.from_file("utilities/templates/system_prompt.txt")
 
 # 1. Reuse central settings to resolve database URL and async driver
 ASYNC_DB_URL = str(settings.db.async_url)
@@ -65,19 +76,42 @@ async def _execute_schedule(
         {"type": "TASK_STARTED", "task_id": task_id},
     )
 
-    engine_instance = get_calendar_engine()
-
     publish_task_event(
         task_id,
         {"type": "LLM_STARTED", "task_id": task_id},
     )
 
-    func_call = engine_instance.extract_calendar_function(request_text)
+    engine_instance = get_calendar_engine()
+
+    start_time = time.perf_counter()
+    # Extract schema and raw token metadata from engine
+    func_call, meta = engine_instance.extract_calendar_function(request_text)
+    latency_ms = (time.perf_counter() - start_time) * 1000
 
     publish_task_event(
         task_id,
         {"type": "LLM_COMPLETED", "task_id": task_id},
     )
+
+    try:
+        # Fire-and-forget logging via UsageTrackerService
+        async with _worker_sessionmaker() as session:
+            log_entry = await UsageTrackerService.log_usage(
+                session=session,
+                provider=meta["provider"],
+                model_name=meta["model_name"],
+                query_text=request_text,
+                system_instruction=str(STATIC_SYSTEM_INSTRUCTIONS),
+                prompt_tokens=meta["prompt_tokens"],
+                completion_tokens=meta["completion_tokens"],
+                cached_tokens=meta["cached_tokens"],
+                execution_time_ms=latency_ms,
+                user_id=user_id,
+                raw_meta=meta["raw_meta"],
+            )
+    except Exception as exc:
+        # Properly logs message and full exception traceback via JSONFormatter
+        logger.exception("Failed to commit usage log record: %s", exc)
 
     publish_task_event(
         task_id,
@@ -166,6 +200,25 @@ def execute_calendar_schedule_task(
                 request_text=request_text,
             )
         )
+    except SQLAlchemyError as exc:
+        # Gracefully handle DB errors without failing the celery task execution
+        logger.error(
+            "Database error occurred during schedule task: %s", exc, exc_info=True
+        )
+        publish_task_event(
+            task_id,
+            {
+                "type": "TASK_FAILED_DB_ERROR",
+                "task_id": task_id,
+                "error": str(exc),
+            },
+        )
+        return {
+            "status": "error",
+            "message": "Database error occurred",
+            "details": str(exc),
+        }
+
     except HttpError as exc:
         status = getattr(exc.resp, "status", None)
         if status not in TRANSIENT_HTTP_CODES:
