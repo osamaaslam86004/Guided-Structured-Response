@@ -5,6 +5,8 @@
 
 from celery.result import AsyncResult
 from fastapi import APIRouter, HTTPException, Path, status
+
+from config.limiter import limiter
 from schemas import TaskStatusResponse
 from celery_app import celery_app
 
@@ -20,6 +22,7 @@ UUID4_REGEX = (
     "/api/v1/tasks/{task_id}",
     response_model=TaskStatusResponse,
 )
+@limiter.limit("60/minute")  # Polling-friendly rate limit
 def get_task_status(
     task_id: str = Path(
         ...,

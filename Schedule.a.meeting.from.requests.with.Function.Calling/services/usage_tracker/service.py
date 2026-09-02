@@ -55,6 +55,8 @@ class UsageTrackerService:
         user_id: Optional[int] = None,
         raw_meta: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Logs LLM metrics using the caller-provided session without altering its lifecycle."""
+
         try:
             total_tokens = prompt_tokens + completion_tokens
             cache_hit = cached_tokens > 0
@@ -82,3 +84,5 @@ class UsageTrackerService:
                 await session.commit()
         except Exception as e:
             logger.error(f"Failed to log LLM usage analytics: {str(e)}")
+            await session.rollback()
+            return None

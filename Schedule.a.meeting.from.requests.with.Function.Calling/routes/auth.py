@@ -11,7 +11,6 @@ import secrets
 from urllib.parse import urlencode
 
 import httpx
-from config.settings import settings
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse
@@ -20,6 +19,9 @@ from google.auth.transport import requests as google_requests
 from sqlalchemy import select
 
 from config.database import AsyncSessionLocal
+from config.limiter import limiter
+from config.settings import settings
+
 from models.user_db import UserDB
 from models.auth_db import OAuthTokenDB
 
@@ -46,6 +48,7 @@ SCOPES = [
 
 
 @router.get("/login")
+@limiter.limit("5/minute")  # Prevents auth abuse/bot spam
 async def login(request: Request):
 
     state = secrets.token_urlsafe(32)
@@ -68,6 +71,7 @@ async def login(request: Request):
 
 
 @router.get("/callback")
+@limiter.limit("10/minute")
 async def callback(
     request: Request,
     code: str,
@@ -185,6 +189,7 @@ async def callback(
 
 
 @router.post("/logout")
+@limiter.limit("30/minute")
 async def logout(request: Request):
 
     request.session.clear()

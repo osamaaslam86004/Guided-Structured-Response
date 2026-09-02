@@ -1,5 +1,7 @@
 # main.py
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,8 +9,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 
 from config.settings import settings
+from config.limiter import limiter
 from config.logging_config import setup_logging
-
 from config.database import close_db
 
 from routes.auth import router as auth_router
@@ -17,7 +19,6 @@ from routes.meeting_scheduler import router as meeting_scheduler_router
 from routes.task_status import router as task_status_router
 from routes.websocket_events import router as websocket_router
 from routes.admin_analytics import router as admin_analytics_router
-
 
 # Initialize global logging before creating the app
 setup_logging(log_level=settings.app.log_level, environment=settings.app.env)
@@ -38,6 +39,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Attach Limiter State & Error Handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     SessionMiddleware,
@@ -52,7 +56,7 @@ app.add_middleware(
     allow_origins=[str(origin) for origin in settings.security.allow_origins],
     allow_credentials=settings.security.allow_credentials,
     allow_methods=settings.security.allow_methods,
-    allow_headers=settings.security.allow_headers
+    allow_headers=settings.security.allow_headers,
 )
 
 app.include_router(auth_router)

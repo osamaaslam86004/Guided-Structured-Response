@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 # Static System Instructions (Exact string match across all calls for Maximum Cache Hits)
-# Templates loaded from files
-system_instruction = Template.from_file("utilities/templates/system_prompt.txt")
+system_instruction = str(Template.from_file("utilities/templates/system_prompt.txt"))
 
 
 # ==========================================
@@ -195,7 +194,25 @@ class GoogleProvider(BaseLLMProvider):
         if not response.text:
             raise RuntimeError("Gemini API returned an empty response.")
 
-        return ScheduleCalendarEventFunction.model_validate_json(response.text)
+        # Extract token metadata from Google GenAI SDK response object
+        usage = getattr(response, "usage_metadata", None)
+        meta = {
+            "provider": "google",
+            "model_name": self.model_name,
+            "prompt_tokens": getattr(usage, "prompt_token_count", 0) if usage else 0,
+            "completion_tokens": (
+                getattr(usage, "candidates_token_count", 0) if usage else 0
+            ),
+            "cached_tokens": (
+                getattr(usage, "cached_content_token_count", 0) if usage else 0
+            ),
+            "raw_meta": {
+                "response_id": getattr(response, "response_id", None),
+                "model_version": getattr(response, "model_version", None),
+            },
+        }
+
+        return ScheduleCalendarEventFunction.model_validate_json(response.text), meta
 
 
 # ==========================================
@@ -249,7 +266,18 @@ class LocalLlamaProvider(BaseLLMProvider):
             max_tokens=300,
             stop=["<|im_end|>", "<|endoftext|>"],
         )
-        return ScheduleCalendarEventFunction.model_validate_json(raw_json)
+
+        # Local CPU/GGUF models cost $0 USD and don't report remote API usage
+        meta = {
+            "provider": "local",
+            "model_name": self.filename,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cached_tokens": 0,
+            "raw_meta": {"repo_id": self.repo_id, "filename": self.filename},
+        }
+
+        return ScheduleCalendarEventFunction.model_validate_json(raw_json), meta
 
 
 # ==========================================

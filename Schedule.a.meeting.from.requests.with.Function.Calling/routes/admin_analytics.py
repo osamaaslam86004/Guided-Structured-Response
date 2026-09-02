@@ -6,12 +6,15 @@ from sqlalchemy import select, func, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.database import get_db
+from config.limiter import limiter
+
 from models.llm_response_tracker_db import LLMUsageLogDB
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin Analytics"])
 
 
 @router.get("/llm-analytics")
+@limiter.limit("10/minute")  # Moderate limit for heavy DB aggregate queries
 async def get_llm_analytics(
     tenant_id: Optional[int] = Query(
         None, description="Optional tenant/user ID filter"

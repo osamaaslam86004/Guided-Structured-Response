@@ -4,13 +4,13 @@
 
 from fastapi import APIRouter, Depends
 
+from config.limiter import limiter
 from auth import get_current_user
 from models.user_db import UserDB
 from schemas import (
     TaskStatusResponse,
     UserScheduleRequest,
 )
-
 from tasks.google_calender_meeting import execute_calendar_schedule_task
 
 router = APIRouter()
@@ -20,6 +20,7 @@ router = APIRouter()
     "/api/v1/async-schedule",
     response_model=TaskStatusResponse,
 )
+@limiter.limit("5/minute;20/hour")  # Strict rate limit for LLM/Celery execution
 async def async_schedule_meeting(
     payload: UserScheduleRequest,
     user: UserDB = Depends(get_current_user),
