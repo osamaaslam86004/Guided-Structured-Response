@@ -1,6 +1,7 @@
 import os
 from celery import Celery
 from config.settings import settings
+from datetime import timedelta
 
 # Use the formatted string URL from central settings
 REDIS_URL = settings.redis.url
@@ -9,7 +10,10 @@ celery_app = Celery(
     "calendar_tasks",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["tasks.google_calender_meeting"],
+    include=[
+        "tasks.google_calender_meeting",
+        "tasks.refresh_oauth_tokens",
+    ],
 )
 
 celery_app.conf.update(
@@ -33,3 +37,11 @@ celery_app.conf.update(
         },
     },
 )
+
+# Periodic beat schedule: rotate OAuth refresh tokens every 5 minutes
+celery_app.conf.beat_schedule = {
+    "rotate-oauth-tokens": {
+        "task": "tasks.rotate_oauth_tokens",
+        "schedule": timedelta(minutes=5),
+    }
+}
