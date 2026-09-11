@@ -62,3 +62,12 @@ my_project/
 │   └── main.py
 │   └── celery_app.py
 ```
+
+## Summary of Limits Set
+| Endpoint / Route | Limit | Justification |
+| :--- | :--- | :--- |
+| `POST /api/v1/async-schedule` | 5/min; 20/hr | Protects Celery queue and LLM costs |
+| `GET /api/v1/admin/llm-analytics` | 10/min | Expensive DB aggregation queries |
+| `GET /auth/login` | 5/min | Prevents OAuth link spamming |
+| `GET /api/v1/tasks/{task_id}` | 60/min | High-frequency client status polling |
+| `WS /ws/events/{task_id}` | 10 conns/min | Handshake protection against socket floods |
