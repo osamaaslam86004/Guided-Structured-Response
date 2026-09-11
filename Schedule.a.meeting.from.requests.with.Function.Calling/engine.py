@@ -19,6 +19,13 @@ from config.settings import settings
 from schemas import ScheduleCalendarEventFunction
 from utilities.circuit_breaker import is_tripped, trip
 
+import httpx
+
+try:
+    from google.api_core import exceptions as google_exceptions
+except Exception:
+    google_exceptions = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -321,18 +328,32 @@ class CalendarFunctionEngine:
                 logger.info(f"Attempting extraction via {provider_name}...")
                 return provider.generate_schedule(system_instruction, user_content)
             except Exception as e:
-                msg = str(e)
+                # Provider-specific precise checks
+                tripped = False
 
-                # If we detect an upstream 429/quota, trip the circuit briefly
-                if "429" in msg or "Too Many Requests" in msg or "quota" in msg.lower():
+                # httpx HTTPStatusError (OpenRouter) -> check for 429
+                if isinstance(e, httpx.HTTPStatusError):
+                    status_code = getattr(e.response, "status_code", None)
+                    if status_code == 429:
+                        tripped = True
+
+                # Google SDK quota/too many requests
+                if google_exceptions is not None and isinstance(
+                    e,
+                    (
+                        getattr(google_exceptions, "TooManyRequests", type(None)),
+                        getattr(google_exceptions, "ResourceExhausted", type(None)),
+                    ),
+                ):
+                    tripped = True
+
+                if tripped:
                     try:
                         trip(provider_name, ttl_seconds=60)
                     except Exception:
                         pass
 
-                logger.warning(
-                    f"[{provider_name} Failed]: {msg}. Attempting fallback..."
-                )
+                logger.warning(f"[{provider_name} Failed]: {e}. Attempting fallback...")
 
         raise RuntimeError("All LLM providers in the fallback chain failed.")
 

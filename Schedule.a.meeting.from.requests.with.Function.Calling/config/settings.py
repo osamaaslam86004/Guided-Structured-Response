@@ -166,6 +166,11 @@ class RateLimitingConfig(BaseModel):
     rate_limit_per_minute: int = 100
     max_file_upload_size_mb: int = 10
     request_timeout_seconds: int = 30
+    # Dual-bucket config
+    requests_per_minute: int = 5
+    request_window_seconds: int = 60
+    tokens_per_hour: int = 50000
+    token_window_seconds: int = 3600
 
 
 # Main Settings Model combining sub-configs

@@ -7,6 +7,9 @@ from datetime import datetime
 import math
 
 from config.cache import get_redis_client
+from config.settings import settings
+from utilities.tokenizer import count_tokens
+from utilities.redis_scripts import atomic_consume
 
 from config.limiter import limiter
 from auth import get_current_user
@@ -30,15 +33,17 @@ async def async_schedule_meeting(
     user: UserDB = Depends(get_current_user),
 ):
 
-    # Dual-bucket enforcement
-    REQUEST_LIMIT = 5
-    REQUEST_WINDOW = 60  # seconds
+    # Dual-bucket enforcement via settings
+    rl = settings.rate_limiting
 
-    TOKEN_LIMIT = 50000
-    TOKEN_WINDOW = 3600  # seconds (1 hour)
+    REQUEST_LIMIT = rl.requests_per_minute
+    REQUEST_WINDOW = rl.request_window_seconds
 
-    # Rough token estimate: characters / 4
-    token_estimate = max(1, math.ceil(len(payload.request_text) / 4))
+    TOKEN_LIMIT = rl.tokens_per_hour
+    TOKEN_WINDOW = rl.token_window_seconds
+
+    # Token estimate using tokenizer
+    token_estimate = max(1, count_tokens(payload.request_text))
 
     redis_client = await get_redis_client()
 
@@ -49,28 +54,22 @@ async def async_schedule_meeting(
     req_key = f"req_bucket:{user.id}:{req_min}"
     token_key = f"token_used:{user.id}:{token_hour}"
 
-    # Increment request counter
-    req_count = await redis_client.incr(req_key)
-    if req_count == 1:
-        await redis_client.expire(req_key, REQUEST_WINDOW)
+    # Atomic consume both buckets using Lua script
+    success, new_req, new_token = await atomic_consume(
+        redis_client,
+        req_key,
+        token_key,
+        REQUEST_LIMIT,
+        TOKEN_LIMIT,
+        token_estimate,
+        REQUEST_WINDOW,
+        TOKEN_WINDOW,
+    )
 
-    if req_count > REQUEST_LIMIT:
+    if not success:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded: too many requests",
-        )
-
-    # Increment token counter atomically and check quota
-    new_tokens = await redis_client.incrby(token_key, token_estimate)
-    if new_tokens == token_estimate:
-        await redis_client.expire(token_key, TOKEN_WINDOW)
-
-    if new_tokens > TOKEN_LIMIT:
-        # Revert token increment
-        await redis_client.decrby(token_key, token_estimate)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Token quota exceeded for current window",
+            detail="Rate limit exceeded (requests or token quota)",
         )
 
     task = execute_calendar_schedule_task.delay(
