@@ -73,12 +73,12 @@ async def _execute_schedule(
 
     publish_task_event(
         task_id,
-        {"type": "TASK_STARTED", "task_id": task_id},
+        {"type": "TASK_STARTED", "task_id": task_id, "user_id": user_id},
     )
 
     publish_task_event(
         task_id,
-        {"type": "LLM_STARTED", "task_id": task_id},
+        {"type": "LLM_STARTED", "task_id": task_id, "user_id": user_id},
     )
 
     engine_instance = get_calendar_engine()
@@ -90,7 +90,7 @@ async def _execute_schedule(
 
     publish_task_event(
         task_id,
-        {"type": "LLM_COMPLETED", "task_id": task_id},
+        {"type": "LLM_COMPLETED", "task_id": task_id, "user_id": user_id},
     )
 
     try:
@@ -115,7 +115,7 @@ async def _execute_schedule(
 
     publish_task_event(
         task_id,
-        {"type": "GOOGLE_CALENDAR_STARTED", "task_id": task_id},
+        {"type": "GOOGLE_CALENDAR_STARTED", "task_id": task_id, "user_id": user_id},
     )
 
     try:
@@ -155,6 +155,7 @@ async def _execute_schedule(
             {
                 "type": "TASK_COMPLETED",
                 "task_id": task_id,
+                "user_id": user_id,
                 "result": result,
             },
         )

@@ -69,6 +69,41 @@ async def task_events(
                 continue
 
             data = json.loads(message["data"])
+            # If event includes user_id, augment with remaining quota metadata
+            user_id = data.get("user_id")
+            if user_id is not None:
+                try:
+                    REQUEST_LIMIT = 5
+                    REQUEST_WINDOW = 60
+                    TOKEN_LIMIT = 50000
+                    TOKEN_WINDOW = 3600
+
+                    import time
+
+                    now = int(time.time())
+                    req_min = now // REQUEST_WINDOW
+                    token_hour = now // TOKEN_WINDOW
+
+                    req_key = f"req_bucket:{user_id}:{req_min}"
+                    token_key = f"token_used:{user_id}:{token_hour}"
+
+                    current_req = await redis_client.get(req_key) or 0
+                    current_req = int(current_req)
+                    req_remaining = max(0, REQUEST_LIMIT - current_req)
+
+                    current_token = await redis_client.get(token_key) or 0
+                    current_token = int(current_token)
+                    token_remaining = max(0, TOKEN_LIMIT - current_token)
+
+                    data["quota"] = {
+                        "requests_remaining": req_remaining,
+                        "tokens_remaining": token_remaining,
+                        "token_window_seconds": TOKEN_WINDOW,
+                    }
+                except Exception:
+                    # Non-fatal: just send the event without quota
+                    pass
+
             await websocket.send_json(data)
 
             # Close socket loop on terminal task states

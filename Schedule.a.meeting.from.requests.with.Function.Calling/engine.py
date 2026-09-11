@@ -17,6 +17,7 @@ from huggingface_hub import hf_hub_download
 
 from config.settings import settings
 from schemas import ScheduleCalendarEventFunction
+from utilities.circuit_breaker import is_tripped, trip
 
 logger = logging.getLogger(__name__)
 
@@ -309,12 +310,28 @@ class CalendarFunctionEngine:
         for provider in self.providers:
             provider_name = provider.__class__.__name__
 
+            # Skip provider if circuit is currently tripped
+            if is_tripped(provider_name):
+                logger.warning(
+                    "Skipping provider %s because circuit is tripped", provider_name
+                )
+                continue
+
             try:
                 logger.info(f"Attempting extraction via {provider_name}...")
                 return provider.generate_schedule(system_instruction, user_content)
             except Exception as e:
+                msg = str(e)
+
+                # If we detect an upstream 429/quota, trip the circuit briefly
+                if "429" in msg or "Too Many Requests" in msg or "quota" in msg.lower():
+                    try:
+                        trip(provider_name, ttl_seconds=60)
+                    except Exception:
+                        pass
+
                 logger.warning(
-                    f"[{provider_name} Failed]: {str(e)}. Attempting fallback..."
+                    f"[{provider_name} Failed]: {msg}. Attempting fallback..."
                 )
 
         raise RuntimeError("All LLM providers in the fallback chain failed.")
