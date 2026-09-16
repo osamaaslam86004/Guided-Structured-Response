@@ -43,7 +43,9 @@ async def async_schedule_meeting(
     TOKEN_WINDOW = rl.token_window_seconds
 
     # Token estimate using tokenizer
-    token_estimate = max(1, count_tokens(payload.request_text))
+    token_estimate = max(
+        1, count_tokens(payload.request_text, model="google/gemma-2-2b")
+    )
 
     redis_client = await get_redis_client()
 
