@@ -18,6 +18,7 @@ import models.google_calender_db
 import models.auth_db
 import models.user_db
 import models.llm_response_tracker_db
+import models.dlq_db
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

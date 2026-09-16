@@ -4,12 +4,13 @@ import json
 import logging
 
 from fastapi import APIRouter, HTTPException, status, Depends, Header
-from pydantic import BaseModel
 
 from config.limiter import limiter
 from config.settings import settings
 from dlq import redis_client
 from celery_app import celery_app
+
+from models.dlq_db import DLQEntry, RequeueResponse
 
 logger = logging.getLogger(__name__)
 
@@ -44,20 +45,6 @@ def require_admin(
 router = APIRouter(
     prefix="/admin/dlq", tags=["Admin"], dependencies=[Depends(require_admin)]
 )
-
-
-class DLQEntry(BaseModel):
-    task_id: str
-    user_id: int
-    request_text: str
-    error: str
-    created_at: str
-
-
-class RequeueResponse(BaseModel):
-    original_task_id: str
-    new_task_id: Optional[str]
-    status: str
 
 
 @router.get("/", response_model=List[DLQEntry])
