@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from celery_app import celery_app
 from google.auth.transport.requests import Request
@@ -35,7 +35,7 @@ async def _rotate_tokens(threshold_minutes: int = 10) -> int:
     Returns number of tokens refreshed.
     """
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     threshold = now + timedelta(minutes=threshold_minutes)
 
     _worker_engine, _worker_sessionmaker = get_task_sessionmaker()

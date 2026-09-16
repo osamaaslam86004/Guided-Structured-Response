@@ -3,7 +3,7 @@
 
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 
 from config.cache import get_redis_client
@@ -47,7 +47,7 @@ async def async_schedule_meeting(
 
     redis_client = await get_redis_client()
 
-    now = int(datetime.utcnow().timestamp())
+    now = int(datetime.now(timezone.utc).timestamp())
     req_min = now // REQUEST_WINDOW
     token_hour = now // TOKEN_WINDOW
 
