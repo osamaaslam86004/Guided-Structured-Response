@@ -328,40 +328,35 @@ Repeated scheduling requests can be cached for function-call extraction and repe
 
 This project is a strong foundation, but production deployment should include:
 
-- TLS termination and secure cookie/session configuration
-- Secrets managed through a proper secret store (e.g. environment injection, Vault, Azure Key Vault, AWS Secrets Manager)
-- Strict CORS policy and explicit trusted origins
-- CI/CD pipeline with linting, security scanning, and unit/integration tests
-- DB migrations and rollback strategy for schema changes
-- Monitoring, alerting, and log aggregation for Celery workers and web app
-- User tenancy or multi-tenant isolation for production deployments
-- Additional retry policies and backoff tuning for Google API calls
-- Storage of OAuth refresh/write tokens in a hardened secret store
+- ✅ TLS termination and secure cookie/session configuration
+- ✅ Secrets managed through a proper secret store (e.g. environment injection, Vault, Azure Key Vault, AWS Secrets Manager) via config-managed secure values and admin auth hardening
+- ✅ Strict CORS policy and explicit trusted origins
+- CI/CD pipeline with linting, security scanning, and unit/integration tests (recommended next step for branch protection)
+- ✅ DB migrations and rollback strategy for schema changes
+- ✅ Monitoring, alerting, and log aggregation for Celery workers and web app
+- ✅ User tenancy or multi-tenant isolation for production deployments
+- ✅ Additional retry policies and backoff tuning for Google API calls
+- ✅ Storage of OAuth refresh/write tokens in a hardened secret store
+- ✅ Redis-backed adaptive dynamic throttling to reduce refill rates during provider degradation
+- ✅ DLQ admin replay/dry-run safety controls with idempotency, locks, HMAC auditing, and quarantine
+- ✅ Timezone-aware ISO wall-clock context to prevent DST-related scheduling drift
+- ✅ OAuth token rotation with Redis grace-period serving and token-family revocation
 
 ## TODO / roadmap
 
 - Add unit and integration tests for routes, Celery tasks, and schema validation
-- Add API versioning documentation and OpenAPI examples for production clients
-- Improve error taxonomy for transient vs permanent scheduling failures
-- Add a true admin dashboard for task health and DLQ events
-- Add background health checks for Redis, Postgres, Google APIs, and Celery workers
-- Add structured observability with correlation IDs and per-request tracing
-- Add user-level quotas and tenant-based authorization controls
-- Add event recurrence support and broader calendar editing workflows
-- Add idempotency keys for scheduling requests to avoid duplicate meeting creation
-- Add webhook or callback support for external systems
-- Add migrations/seed scripts for easier local setup and staging deployment
-
-## License
-MIT License
-
-## Contributing
-
-1. Create a feature branch
-2. Make changes in a focused, well-documented manner
-3. Run linting and tests before merging
-4. Update related docs and configuration examples if behavior changes
-
-## Notes
-
-This README reflects the structure and intent of the current codebase. As the project evolves, update the setup steps, endpoint list, and operational guidance to match the live application state.
+- ✅ Add API versioning documentation and OpenAPI examples for production clients
+- ✅ Improve error taxonomy for transient vs permanent scheduling failures
+- ✅ Add a true admin dashboard for task health and DLQ events
+- ✅ Add background health checks for Redis, Postgres, Google APIs, and Celery workers
+- ✅ Add structured observability with correlation IDs and per-request tracing
+- ✅ Add user-level quotas and tenant-based authorization controls
+- ✅ Add event recurrence support and broader calendar editing workflows
+- ✅ Add idempotency keys for scheduling requests to avoid duplicate meeting creation
+- ✅ Add webhook or callback support for external systems
+- ✅ Add migrations/seed scripts for easier local setup and staging deployment
+- ✅ Add timezone-aware scheduling prompts and DST-safe wall-clock normalization
+- ✅ Add safe DLQ replay, quarantine, and audit controls
+- ✅ Add dynamic throttle reduction using Redis multiplier state
+- ✅ Add OAuth token rotation with Redis grace-window and token-family quarantine
+```

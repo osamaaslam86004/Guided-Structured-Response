@@ -298,6 +298,7 @@ class CalendarFunctionEngine:
         # Define provider priority sequence
         self.providers = [OpenRouterProvider(), GoogleProvider(), LocalLlamaProvider()]
 
+    # This protects against off-by-one-hour scheduling errors during DST transitions
     def _parse_and_format_timezone_context(
         self, user_tz_str: str, anchor_dt: Optional[datetime] = None
     ) -> Dict[str, str]:
