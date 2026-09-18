@@ -2,6 +2,9 @@ from typing import List, Optional
 
 import json
 import logging
+import hmac
+import hashlib
+from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, status, Depends, Header
 
@@ -11,6 +14,9 @@ from dlq import redis_client
 from celery_app import celery_app
 
 from models.dlq_db import DLQEntry, RequeueResponse
+from schemas import DLQReplayRequest, DLQDryRunResponse
+from engine import get_calendar_engine
+from utilities import adaptive_throttling
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +51,161 @@ def require_admin(
 router = APIRouter(
     prefix="/admin/dlq", tags=["Admin"], dependencies=[Depends(require_admin)]
 )
+
+
+@router.post("/replay", response_model=RequeueResponse)
+@limiter.limit("10/minute")
+def replay_dlq_message(
+    body: DLQReplayRequest,
+    idempotency_key: str = Header(..., alias="X-Idempotency-Key"),
+):
+    """Replay a DLQ message safely using Redis locks and idempotency.
+
+    - Requires an `X-Idempotency-Key` header to prevent duplicate replays.
+    - Moves messages with too many replays into a quarantine set.
+    """
+
+    dlq_key = settings.redis.dlq_key
+    lock_key = f"dlq:lock:{body.message_id}"
+    idempotency_redis_key = f"idempotency:dlq:{idempotency_key}"
+
+    # Idempotency check
+    if redis_client.get(idempotency_redis_key):
+        raise HTTPException(status_code=409, detail="Replay active or completed.")
+
+    # Acquire lock
+    if not redis_client.set(lock_key, "processing", nx=True, ex=60):
+        raise HTTPException(status_code=423, detail="Message currently locked.")
+
+    try:
+        raw_list = redis_client.lrange(dlq_key, 0, -1)
+        target_raw = None
+        for raw in raw_list:
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+            if payload.get("task_id") == body.message_id:
+                target_raw = raw
+                target_payload = payload
+                break
+
+        if not target_raw:
+            raise HTTPException(status_code=404, detail="DLQ message not found")
+
+        replay_count = int(target_payload.get("replay_count", 0))
+
+        # Quarantine threshold
+        if replay_count >= 3:
+            # Add to quarantine set and remove from list
+            try:
+                redis_client.sadd("dlq:quarantine", json.dumps(target_payload))
+                redis_client.lrem(dlq_key, 1, target_raw)
+                # Apply adaptive throttling signal (conservative defaults)
+                try:
+                    adaptive_throttling.adjust_based_on_metrics(
+                        provider="llm", p95_latency_ms=1000.0, error_rate=0.5
+                    )
+                except Exception:
+                    logger.exception("Adaptive throttling call failed")
+
+            except Exception:
+                logger.exception("Failed to move DLQ message to quarantine")
+
+            raise HTTPException(status_code=400, detail="Moved to quarantine.")
+
+        # Increment replay count and update list atomically by removing then appending updated payload
+        target_payload["replay_count"] = replay_count + 1
+        updated_raw = json.dumps(target_payload)
+        # Remove the original and append updated item
+        redis_client.lrem(dlq_key, 1, target_raw)
+        redis_client.rpush(dlq_key, updated_raw)
+
+        # Mark idempotency key for some time
+        redis_client.set(idempotency_redis_key, body.message_id, ex=3600)
+
+        # Dispatch to Celery same as other requeue logic
+        user_id = target_payload.get("user_id")
+        request_text = target_payload.get("request_text")
+
+        try:
+            async_result = celery_app.send_task(
+                "tasks.execute_calendar_schedule_task",
+                args=[user_id, request_text],
+            )
+            new_id = getattr(async_result, "id", None)
+            return RequeueResponse(
+                original_task_id=body.message_id, new_task_id=new_id, status="requeued"
+            )
+        except Exception as exc:
+            logger.exception("Failed to requeue DLQ entry %s: %s", body.message_id, exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to requeue task",
+            )
+
+    finally:
+        redis_client.delete(lock_key)
+
+
+@router.post("/dry-run", response_model=DLQDryRunResponse)
+@limiter.limit("30/minute")
+def dlq_dry_run(
+    body: DLQReplayRequest,
+):
+    """Perform a dry-run (read-only) replay of a DLQ message.
+
+    Returns a parsed function-call representation and an HMAC audit signature
+    for the raw DLQ payload. This endpoint must NOT call external stateful
+    systems (Google Calendar) — it only performs extraction and returns a
+    signature for auditing.
+    """
+
+    dlq_key = settings.redis.dlq_key
+
+    raw_list = redis_client.lrange(dlq_key, 0, -1)
+    target_raw = None
+    target_payload = None
+    for raw in raw_list:
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+        if payload.get("task_id") == body.message_id:
+            target_raw = raw
+            target_payload = payload
+            break
+
+    if not target_raw:
+        raise HTTPException(status_code=404, detail="DLQ message not found")
+
+    request_text = target_payload.get("request_text")
+
+    # Extract parsed function via the engine (no side-effects)
+    try:
+        engine_inst = get_calendar_engine()
+        func_call = engine_inst.extract_calendar_function(request_text)
+        parsed = func_call.model_dump()
+    except Exception as exc:
+        logger.exception("Dry-run extraction failed for %s: %s", body.message_id, exc)
+        raise HTTPException(status_code=500, detail="Extraction failed")
+
+    # HMAC audit signature over the raw payload using app master key
+    try:
+        master_hex = settings.security.app_master_key
+        key = bytes.fromhex(master_hex)
+        sig = hmac.new(key, target_raw.encode("utf-8"), hashlib.sha256).hexdigest()
+    except Exception:
+        logger.exception("Failed to compute HMAC for DLQ dry-run")
+        sig = None
+
+    return DLQDryRunResponse(
+        message_id=body.message_id,
+        cached=False,
+        parsed_function=parsed,
+        hmac_signature=sig,
+        note="Dry-run only; no downstream side-effects",
+    )
 
 
 @router.get("/", response_model=List[DLQEntry])
