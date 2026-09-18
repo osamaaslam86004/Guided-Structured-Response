@@ -4,6 +4,7 @@ import logging
 import outlines
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from typing import Dict, Optional
 import httpx
 
 # Google SDK imports
@@ -14,6 +15,7 @@ from google.genai import types
 from llama_cpp import Llama
 from outlines.templates import Template
 from huggingface_hub import hf_hub_download
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from config.settings import settings
 from schemas import ScheduleCalendarEventFunction
@@ -296,14 +298,48 @@ class CalendarFunctionEngine:
         # Define provider priority sequence
         self.providers = [OpenRouterProvider(), GoogleProvider(), LocalLlamaProvider()]
 
+    def _parse_and_format_timezone_context(
+        self, user_tz_str: str, anchor_dt: Optional[datetime] = None
+    ) -> Dict[str, str]:
+        """Resolve IANA timezone and emit wall-clock context for deterministic scheduling."""
+        if not anchor_dt:
+            anchor_dt = datetime.now(timezone.utc)
+
+        try:
+            tz = ZoneInfo(user_tz_str)
+        except (ZoneInfoNotFoundError, ValueError):
+            tz = ZoneInfo("UTC")
+
+        localized_dt = anchor_dt.astimezone(tz)
+        utc_offset = localized_dt.utcoffset()
+        total_seconds = int(utc_offset.total_seconds()) if utc_offset else 0
+        hours = total_seconds // 3600
+        minutes = abs(total_seconds % 3600) // 60
+        offset_formatted = f"{hours:+03d}:{minutes:02d}"
+        is_dst = bool(localized_dt.dst() and localized_dt.dst().total_seconds() != 0)
+
+        return {
+            "iana_identifier": tz.key,
+            "iso_now": localized_dt.isoformat(),
+            "utc_offset": offset_formatted,
+            "is_dst": str(is_dst),
+            "tz_abbreviation": localized_dt.tzname() or "UTC",
+        }
+
     def _build_prompt(self, request_text: str) -> str:
         now_utc = datetime.now(timezone.utc)
         current_iso = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         current_date_str = now_utc.strftime("%Y-%m-%d (%A)")
+        timezone_context = self._parse_and_format_timezone_context("UTC", now_utc)
 
         return (
             f"CURRENT DATETIME REFERENCE (UTC): {current_iso}\n"
-            f"CURRENT DATE: {current_date_str}\n\n"
+            f"CURRENT DATE: {current_date_str}\n"
+            f"TIMEZONE CONTEXT: iana={timezone_context['iana_identifier']}, "
+            f"local_iso_now={timezone_context['iso_now']}, "
+            f"utc_offset={timezone_context['utc_offset']}, "
+            f"is_dst={timezone_context['is_dst']}, "
+            f"tz_abbreviation={timezone_context['tz_abbreviation']}\n\n"
             f"User Request: {request_text}"
         )
 
