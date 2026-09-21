@@ -275,3 +275,115 @@ class EncryptedString(TypeDecorator):
         if value is not None:
             return decrypt_envelope(value)
         return value
+
+
+def append_event_stream(
+    stream_name: str,
+    *,
+    event_type: str,
+    payload: dict,
+    correlation_id: str | None = None,
+    tenant_id: int | str | None = None,
+) -> dict:
+    """Append a structured event to a Redis Streams topic for pub/sub consumers."""
+    try:
+        event = {
+            "event_type": event_type,
+            "tenant_id": tenant_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "correlation_id": correlation_id
+            or get_current_correlation_id()
+            or generate_correlation_id(),
+            "payload": json.dumps(payload, separators=(",", ":"), ensure_ascii=True),
+        }
+        redis_client = redis.Redis.from_url(settings.redis.url, decode_responses=True)
+        stream_id = redis_client.xadd(stream_name, event)
+        return {"stream": stream_name, "id": stream_id, **event}
+    except Exception:
+        logger.exception("Failed to append event stream record for %s", stream_name)
+        return {
+            "stream": stream_name,
+            "event_type": event_type,
+            "error": "stream_write_failed",
+        }
+
+
+def record_latency_sample(
+    *,
+    operation: str,
+    latency_ms: float,
+    status: str = "ok",
+    tenant_id: int | str | None = None,
+    correlation_id: str | None = None,
+    metadata: dict | None = None,
+) -> dict:
+    """Record latency samples for percentile-based provider monitoring."""
+    event = {
+        "operation": operation,
+        "latency_ms": float(latency_ms),
+        "status": status,
+        "tenant_id": tenant_id,
+        "metadata": metadata or {},
+    }
+    append_event_stream(
+        "metrics:latency",
+        event_type="latency_sample",
+        payload=event,
+        correlation_id=correlation_id,
+        tenant_id=tenant_id,
+    )
+    return {
+        "operation": operation,
+        "latency_ms": float(latency_ms),
+        "status": status,
+        "correlation_id": correlation_id or get_current_correlation_id(),
+    }
+
+
+def ensure_stream_group(
+    stream_name: str, group_name: str, *, start_id: str = "0"
+) -> bool:
+    """Ensure a Redis Streams consumer group exists for scalable workers."""
+    try:
+        redis_client = redis.Redis.from_url(settings.redis.url, decode_responses=True)
+        try:
+            redis_client.xgroup_create(
+                stream_name, group_name, id=start_id, mkstream=True
+            )
+        except redis.exceptions.ResponseError as exc:
+            if "BUSYGROUP" not in str(exc):
+                raise
+        return True
+    except Exception:
+        logger.exception(
+            "Failed to create Redis Streams consumer group %s for %s",
+            group_name,
+            stream_name,
+        )
+        return False
+
+
+def read_stream_group(
+    stream_name: str,
+    group_name: str,
+    consumer_name: str,
+    *,
+    block_ms: int = 5000,
+    count: int = 10,
+) -> list[dict]:
+    """Read a batch of events for a consumer group without manual offset tracking."""
+    try:
+        redis_client = redis.Redis.from_url(settings.redis.url, decode_responses=True)
+        messages = redis_client.xreadgroup(
+            group_name, consumer_name, {stream_name: ">"}, count=count, block=block_ms
+        )
+        items = []
+        for _, events in messages or []:
+            for event_id, fields in events:
+                items.append({"id": event_id, "fields": fields})
+        return items
+    except Exception:
+        logger.exception(
+            "Failed to read Redis Streams group %s/%s", stream_name, group_name
+        )
+        return []

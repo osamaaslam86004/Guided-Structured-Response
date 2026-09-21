@@ -171,6 +171,15 @@ class RateLimitingConfig(BaseModel):
     request_window_seconds: int = 60
     tokens_per_hour: int = 50000
     token_window_seconds: int = 3600
+    hot_reload_ttl_seconds: int = 300
+    latency_sample_window: int = 1000
+
+    @field_validator("hot_reload_ttl_seconds", "latency_sample_window")
+    @classmethod
+    def validate_runtime_tuning_values(cls, v: int, info) -> int:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be greater than 0.")
+        return v
 
 
 # Main Settings Model combining sub-configs
@@ -181,6 +190,7 @@ class Settings(BaseSettings):
     redis: RedisConfig
     google_oauth: GoogleOAuthConfig
     llm: LLMModelProviderConfig
+    rate_limit: RateLimitingConfig = Field(default_factory=RateLimitingConfig)
 
     model_config = SettingsConfigDict(
         env_file=".env",

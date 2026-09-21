@@ -1,8 +1,55 @@
 # config/limiter.py
+import json
+import logging
+
+import redis
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from fastapi import Request
+
 from config.settings import settings
+from utilities.security import append_audit_event, get_current_correlation_id
+
+logger = logging.getLogger(__name__)
+_redis = redis.Redis.from_url(settings.redis.url, decode_responses=True)
+
+
+def get_runtime_limit(name: str, default_limit: str = "100/minute") -> str:
+    raw_value = _redis.get(f"runtime:limit:{name}")
+    if raw_value:
+        try:
+            value = json.loads(raw_value)
+            if isinstance(value, str):
+                return value
+            if isinstance(value, dict):
+                return value.get("limit", default_limit)
+        except (TypeError, ValueError):
+            pass
+        return str(raw_value)
+    return default_limit
+
+
+def set_runtime_limit(
+    name: str, limit_value: str, ttl_seconds: int | None = None
+) -> str:
+    ttl_seconds = ttl_seconds or settings.rate_limit.hot_reload_ttl_seconds
+    _redis.set(
+        f"runtime:limit:{name}",
+        json.dumps(
+            {"limit": str(limit_value), "updated_at": __import__("time").time()}
+        ),
+        ex=ttl_seconds,
+    )
+    append_audit_event(
+        "rate_limit_policy_updated",
+        actor_id="system",
+        tenant_id="system",
+        action="rate_limit.hot_reload",
+        resource=name,
+        metadata={"limit": str(limit_value), "ttl_seconds": ttl_seconds},
+        correlation_id=get_current_correlation_id(),
+    )
+    return str(limit_value)
 
 
 def get_identifier(request: Request) -> str:
@@ -21,5 +68,7 @@ def get_identifier(request: Request) -> str:
 limiter = Limiter(
     key_func=get_identifier,
     storage_uri=settings.redis.async_url,  # Uses your Redis instance
-    default_limits=["100/minute"],  # Default global rate limit
+    default_limits=[
+        get_runtime_limit("default", "100/minute")
+    ],  # Default global rate limit
 )

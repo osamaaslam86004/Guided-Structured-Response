@@ -359,4 +359,11 @@ This project is a strong foundation, but production deployment should include:
 - ✅ Add safe DLQ replay, quarantine, and audit controls
 - ✅ Add dynamic throttle reduction using Redis multiplier state
 - ✅ Add OAuth token rotation with Redis grace-window and token-family quarantine
+- ✅ Signed tenant JWT context and request-time tenant enforcement
+- ✅ Tenant-aware DLQ replay validation to stop cross-tenant leakage
+- ✅ Centralized append-only audit event writing with HMAC tamper evidence
+- ✅ Correlation ID propagation across requests and task execution
+- ✅ Structured JSON logging enriched with correlation metadata
+- ✅ Audit emission for OAuth refreshes, retry/throttling events, circuit-breaker transitions, and task lifecycle events"
+
 ```

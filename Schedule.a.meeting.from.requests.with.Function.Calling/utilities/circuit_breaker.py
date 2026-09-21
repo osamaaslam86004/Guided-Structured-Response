@@ -1,6 +1,7 @@
 import time
 import logging
 import redis
+import json
 from typing import Optional
 
 from config.settings import settings
@@ -56,3 +57,50 @@ def clear(provider_name: str) -> None:
         )
     except Exception:
         pass
+
+
+def set_breaker_policy(
+    provider_name: str,
+    *,
+    open_threshold: int = 5,
+    reset_timeout_seconds: int = 60,
+    ttl_seconds: int | None = None,
+) -> dict:
+    """Store dynamic breaker policy values in Redis so the system can adapt without a redeploy."""
+    ttl_seconds = ttl_seconds or settings.rate_limit.hot_reload_ttl_seconds
+    policy = {
+        "provider": provider_name,
+        "open_threshold": int(open_threshold),
+        "reset_timeout_seconds": int(reset_timeout_seconds),
+        "ttl_seconds": int(ttl_seconds),
+        "updated_at": int(time.time()),
+    }
+    _redis.set(f"runtime:breaker:{provider_name}", json.dumps(policy), ex=ttl_seconds)
+    append_audit_event(
+        "circuit_breaker_policy_updated",
+        actor_id="system",
+        tenant_id="system",
+        action="circuit_breaker.hot_reload",
+        resource=provider_name,
+        metadata=policy,
+        correlation_id=get_current_correlation_id(),
+    )
+    return policy
+
+
+def get_breaker_policy(provider_name: str) -> dict:
+    raw = _redis.get(f"runtime:breaker:{provider_name}")
+    if not raw:
+        return {
+            "provider": provider_name,
+            "open_threshold": 5,
+            "reset_timeout_seconds": 60,
+        }
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return {
+            "provider": provider_name,
+            "open_threshold": 5,
+            "reset_timeout_seconds": 60,
+        }
