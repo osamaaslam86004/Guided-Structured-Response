@@ -365,5 +365,10 @@ This project is a strong foundation, but production deployment should include:
 - ✅ Correlation ID propagation across requests and task execution
 - ✅ Structured JSON logging enriched with correlation metadata
 - ✅ Audit emission for OAuth refreshes, retry/throttling events, circuit-breaker transitions, and task lifecycle events"
+- ✅ Automated backpressure: P95/P99 tracking enables real-time load shedding without manual intervention
+- ✅ Zero-downtime tuning: Rate limits and breaker policies can be adjusted live from Redis, no cluster redeploy needed
+- ✅ Scalable event consumption: Redis Streams consumer groups allow horizontal scaling of telemetry processors
+- ✅ Fine-grained observability: Every policy change is recorded in the immutable audit trail with full correlation context
+
 
 ```
