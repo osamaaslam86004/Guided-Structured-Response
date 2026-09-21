@@ -21,6 +21,8 @@ from routes.websocket_events import router as websocket_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.dlq_admin import router as dlq_admin_router
 
+from middleware.tenant_guard import TenantGuardMiddleware
+
 # Initialize global logging before creating the app
 setup_logging(log_level=settings.app.log_level, environment=settings.app.env)
 
@@ -59,6 +61,8 @@ app.add_middleware(
     allow_methods=settings.security.allow_methods,
     allow_headers=settings.security.allow_headers,
 )
+
+app.add_middleware(TenantGuardMiddleware)
 
 app.include_router(auth_router)
 app.include_router(event_parser_router)

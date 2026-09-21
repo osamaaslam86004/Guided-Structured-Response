@@ -6,7 +6,7 @@ import hmac
 import hashlib
 from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException, status, Depends, Header
+from fastapi import APIRouter, HTTPException, status, Depends, Header, Request
 
 from config.limiter import limiter
 from config.settings import settings
@@ -17,6 +17,11 @@ from models.dlq_db import DLQEntry, RequeueResponse
 from schemas import DLQReplayRequest, DLQDryRunResponse
 from engine import get_calendar_engine
 from utilities import adaptive_throttling
+from utilities.security import (
+    append_audit_event,
+    verify_tenant_context,
+    validate_tenant_access,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +58,30 @@ router = APIRouter(
 )
 
 
+def _require_dlq_tenant_scope(
+    request: Request,
+    *,
+    operation: str,
+    tenant_owner: int | str | None = None,
+    entity_key: str | None = None,
+):
+    claims = validate_tenant_access(
+        request,
+        "dlq:replay",
+        tenant_owner_id=tenant_owner,
+        resource_key=entity_key,
+    )
+    if operation not in (claims.get("bounds", {}).get("allowed_operations") or []):
+        raise HTTPException(
+            status_code=403, detail="Operation not allowed for tenant scope"
+        )
+    return claims
+
+
 @router.post("/replay", response_model=RequeueResponse)
 @limiter.limit("10/minute")
 def replay_dlq_message(
+    request: Request,
     body: DLQReplayRequest,
     idempotency_key: str = Header(..., alias="X-Idempotency-Key"),
 ):
@@ -64,6 +90,8 @@ def replay_dlq_message(
     - Requires an `X-Idempotency-Key` header to prevent duplicate replays.
     - Moves messages with too many replays into a quarantine set.
     """
+
+    claims = _require_dlq_tenant_scope(request, operation="replay")
 
     dlq_key = settings.redis.dlq_key
     lock_key = f"dlq:lock:{body.message_id}"
@@ -80,6 +108,7 @@ def replay_dlq_message(
     try:
         raw_list = redis_client.lrange(dlq_key, 0, -1)
         target_raw = None
+        target_payload = None
         for raw in raw_list:
             try:
                 payload = json.loads(raw)
@@ -93,6 +122,19 @@ def replay_dlq_message(
         if not target_raw:
             raise HTTPException(status_code=404, detail="DLQ message not found")
 
+        tenant_owner = target_payload.get("user_id")
+        entity_key = f"user:{tenant_owner}"
+        claims = _require_dlq_tenant_scope(
+            request,
+            operation="replay",
+            tenant_owner=tenant_owner,
+            entity_key=entity_key,
+        )
+        if str(claims.get("tenant_id")) != str(tenant_owner):
+            raise HTTPException(
+                status_code=403, detail="Tenant mismatch for requested DLQ record"
+            )
+
         replay_count = int(target_payload.get("replay_count", 0))
 
         # Quarantine threshold
@@ -101,32 +143,45 @@ def replay_dlq_message(
             try:
                 redis_client.sadd("dlq:quarantine", json.dumps(target_payload))
                 redis_client.lrem(dlq_key, 1, target_raw)
-                # Apply adaptive throttling signal (conservative defaults)
                 try:
                     adaptive_throttling.adjust_based_on_metrics(
                         provider="llm", p95_latency_ms=1000.0, error_rate=0.5
                     )
                 except Exception:
                     logger.exception("Adaptive throttling call failed")
-
             except Exception:
                 logger.exception("Failed to move DLQ message to quarantine")
 
+            append_audit_event(
+                "dlq_replay_quarantined",
+                actor_id=claims.get("user_id"),
+                tenant_id=claims.get("tenant_id"),
+                action="dlq:replay",
+                resource=body.message_id,
+                metadata={"tenant_owner": tenant_owner, "entity_key": entity_key},
+                request_id=idempotency_key,
+            )
             raise HTTPException(status_code=400, detail="Moved to quarantine.")
 
-        # Increment replay count and update list atomically by removing then appending updated payload
         target_payload["replay_count"] = replay_count + 1
         updated_raw = json.dumps(target_payload)
-        # Remove the original and append updated item
         redis_client.lrem(dlq_key, 1, target_raw)
         redis_client.rpush(dlq_key, updated_raw)
 
-        # Mark idempotency key for some time
         redis_client.set(idempotency_redis_key, body.message_id, ex=3600)
 
-        # Dispatch to Celery same as other requeue logic
         user_id = target_payload.get("user_id")
         request_text = target_payload.get("request_text")
+
+        append_audit_event(
+            "dlq_replay",
+            actor_id=claims.get("user_id"),
+            tenant_id=claims.get("tenant_id"),
+            action="dlq:replay",
+            resource=body.message_id,
+            metadata={"tenant_owner": user_id, "request_text": request_text[:200]},
+            request_id=idempotency_key,
+        )
 
         try:
             async_result = celery_app.send_task(
@@ -151,6 +206,7 @@ def replay_dlq_message(
 @router.post("/dry-run", response_model=DLQDryRunResponse)
 @limiter.limit("30/minute")
 def dlq_dry_run(
+    request: Request,
     body: DLQReplayRequest,
 ):
     """Perform a dry-run (read-only) replay of a DLQ message.
@@ -161,6 +217,7 @@ def dlq_dry_run(
     signature for auditing.
     """
 
+    claims = _require_dlq_tenant_scope(request, operation="replay")
     dlq_key = settings.redis.dlq_key
 
     raw_list = redis_client.lrange(dlq_key, 0, -1)
@@ -178,6 +235,16 @@ def dlq_dry_run(
 
     if not target_raw:
         raise HTTPException(status_code=404, detail="DLQ message not found")
+
+    tenant_owner = target_payload.get("user_id")
+    entity_key = f"user:{tenant_owner}"
+    claims = _require_dlq_tenant_scope(
+        request, operation="replay", tenant_owner=tenant_owner, entity_key=entity_key
+    )
+    if str(claims.get("tenant_id")) != str(tenant_owner):
+        raise HTTPException(
+            status_code=403, detail="Tenant mismatch for requested DLQ record"
+        )
 
     request_text = target_payload.get("request_text")
 
@@ -198,6 +265,16 @@ def dlq_dry_run(
     except Exception:
         logger.exception("Failed to compute HMAC for DLQ dry-run")
         sig = None
+
+    append_audit_event(
+        "dlq_dry_run",
+        actor_id=claims.get("user_id"),
+        tenant_id=claims.get("tenant_id"),
+        action="dlq:dry_run",
+        resource=body.message_id,
+        metadata={"tenant_owner": tenant_owner, "entity_key": entity_key},
+        request_id=body.message_id,
+    )
 
     return DLQDryRunResponse(
         message_id=body.message_id,
@@ -242,7 +319,6 @@ def requeue_dlq_entry(task_id: str):
             user_id = payload.get("user_id")
             request_text = payload.get("request_text")
 
-            # Re-dispatch the task to Celery
             try:
                 async_result = celery_app.send_task(
                     "tasks.execute_calendar_schedule_task",
@@ -250,7 +326,6 @@ def requeue_dlq_entry(task_id: str):
                 )
                 new_id = getattr(async_result, "id", None)
 
-                # Remove the DLQ entry
                 redis_client.lrem(settings.redis.dlq_key, 1, raw)
 
                 return RequeueResponse(
@@ -301,7 +376,6 @@ def requeue_all_dlq_entries():
                     "status": "requeued",
                 }
             )
-            # Remove processed item
             redis_client.lrem(settings.redis.dlq_key, 1, raw)
         except Exception:
             logger.exception("Failed to requeue DLQ entry: %s", task_id)

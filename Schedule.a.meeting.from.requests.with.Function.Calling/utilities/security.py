@@ -4,21 +4,177 @@
 # import secrets
 # print(secrets.token_hex(32)) # Generates 64 hex chars like: "a3f5b8..."
 
-import os
-import json
 import base64
-from config.settings import settings
+import hashlib
+import hmac
+import json
+import logging
+import os
+import time
+import uuid
+from datetime import datetime, timezone
 
+import jwt
+import redis
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
-
+from fastapi import HTTPException, Request
 from sqlalchemy import Text
-from sqlalchemy.types import TypeDecorator, Text
+from sqlalchemy.types import TypeDecorator
 
-# Master key loaded
-# Guaranteed to be valid 32-bytes because Pydantic validated it on boot
+from config.settings import settings
+
+logger = logging.getLogger(__name__)
 MASTER_KEY = bytes.fromhex(settings.security.app_master_key)
+JWT_ISSUER = "calendar-scheduling-api"
+DEFAULT_TENANT_TOKEN_TTL_SECONDS = 3600
+AUDIT_REDIS_KEY = "audit:events"
+
+
+def _canonical_json(value: dict) -> str:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+
+
+def _tenant_secret() -> str:
+    return settings.security.app_master_key
+
+
+def build_tenant_context(
+    tenant_id: int | str,
+    scopes: list[str] | tuple[str, ...] | None = None,
+    operation: str = "request",
+    entity_key: str | None = None,
+    bounds: dict | None = None,
+    ttl_seconds: int | None = None,
+) -> str:
+    now = int(time.time())
+    ttl = ttl_seconds or DEFAULT_TENANT_TOKEN_TTL_SECONDS
+    payload = {
+        "iss": JWT_ISSUER,
+        "sub": str(tenant_id),
+        "tenant_id": str(tenant_id),
+        "user_id": tenant_id if isinstance(tenant_id, int) else str(tenant_id),
+        "scopes": sorted(set(scopes or ["calendar:read", "calendar:write"])),
+        "operation": operation,
+        "entity_key": entity_key,
+        "bounds": bounds or {},
+        "iat": now,
+        "nbf": now,
+        "exp": now + ttl,
+        "jti": uuid.uuid4().hex,
+    }
+    return jwt.encode(payload, _tenant_secret(), algorithm="HS256")
+
+
+def verify_tenant_context(token: str | None) -> dict | None:
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(
+            token,
+            _tenant_secret(),
+            algorithms=["HS256"],
+            issuer=JWT_ISSUER,
+            options={"require": ["exp", "tenant_id", "scopes"]},
+        )
+    except Exception:
+        logger.warning("Rejected invalid tenant JWT context", exc_info=True)
+        return None
+
+    if not payload.get("tenant_id"):
+        return None
+
+    return payload
+
+
+def get_request_tenant_context(request: Request) -> dict | None:
+    token = (
+        request.session.get("tenant_context") if hasattr(request, "session") else None
+    )
+
+    if not token:
+        token = request.headers.get("X-Tenant-Context") or request.headers.get(
+            "X-Tenant-JWT"
+        )
+
+    if not token:
+        auth = request.headers.get("Authorization")
+        if auth and auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+
+    return verify_tenant_context(token)
+
+
+def validate_tenant_access(
+    request: Request,
+    required_scope: str,
+    *,
+    tenant_owner_id: int | str | None = None,
+    resource_key: str | None = None,
+) -> dict:
+    claims = get_request_tenant_context(request)
+    if not claims:
+        raise HTTPException(status_code=401, detail="Tenant context required")
+
+    scopes = set(claims.get("scopes", []))
+    if required_scope not in scopes:
+        raise HTTPException(status_code=403, detail=f"Missing scope: {required_scope}")
+
+    if tenant_owner_id is not None:
+        if str(claims.get("tenant_id")) != str(tenant_owner_id):
+            raise HTTPException(
+                status_code=403, detail="Tenant mismatch for requested resource"
+            )
+
+    if (
+        resource_key is not None
+        and claims.get("entity_key")
+        and claims.get("entity_key") != resource_key
+    ):
+        raise HTTPException(
+            status_code=403, detail="Entity key mismatch for tenant scope"
+        )
+
+    return claims
+
+
+def append_audit_event(
+    event_type: str,
+    *,
+    actor_id: int | str | None,
+    tenant_id: int | str | None,
+    action: str,
+    resource: str,
+    metadata: dict | None = None,
+    request_id: str | None = None,
+) -> dict:
+    try:
+        payload = {
+            "event_type": event_type,
+            "event_id": uuid.uuid4().hex,
+            "actor_id": actor_id,
+            "tenant_id": tenant_id,
+            "action": action,
+            "resource": resource,
+            "metadata": metadata or {},
+            "request_id": request_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        digest = hmac.new(
+            MASTER_KEY,
+            _canonical_json(payload).encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        payload["audit_signature"] = digest
+
+        redis_client = redis.Redis.from_url(settings.redis.url, decode_responses=True)
+        redis_client.rpush(AUDIT_REDIS_KEY, json.dumps(payload))
+        return payload
+    except Exception:
+        logger.exception("Failed to append tenant audit event")
+        return {"event_type": event_type, "error": "audit_write_failed"}
 
 
 def _get_kek(salt: bytes) -> AESGCM:
@@ -33,28 +189,21 @@ def _get_kek(salt: bytes) -> AESGCM:
 
 
 def encrypt_envelope(plaintext: str) -> str:
-    """
-    Encrypts data using a unique Data Encryption Key (DEK).
-    The DEK is encrypted using a derived Key Encryption Key (KEK).
-    """
+    """Encrypt data using a one-time DEK and wrap it in an envelope."""
     if plaintext is None:
         return None
 
-    # 1. Generate unique DEK and KEK derivation salt
     kek_salt = os.urandom(16)
     dek_raw = AESGCM.generate_key(bit_length=256)
 
-    # 2. Encrypt plaintext using DEK
     dek_cipher = AESGCM(dek_raw)
     data_nonce = os.urandom(12)
     ciphertext = dek_cipher.encrypt(data_nonce, plaintext.encode("utf-8"), None)
 
-    # 3. Encrypt DEK using derived KEK
     kek_cipher = _get_kek(kek_salt)
     dek_nonce = os.urandom(12)
     encrypted_dek = kek_cipher.encrypt(dek_nonce, dek_raw, None)
 
-    # 4. Package into payload
     payload = {
         "kek_salt": base64.b64encode(kek_salt).decode("utf-8"),
         "dek_nonce": base64.b64encode(dek_nonce).decode("utf-8"),
@@ -66,7 +215,7 @@ def encrypt_envelope(plaintext: str) -> str:
 
 
 def decrypt_envelope(payload_json: str) -> str:
-    """Decrypts an envelope payload back into plaintext."""
+    """Decrypt a previously encrypted envelope payload."""
     if payload_json is None:
         return None
 
@@ -78,11 +227,9 @@ def decrypt_envelope(payload_json: str) -> str:
     data_nonce = base64.b64decode(payload["data_nonce"])
     ciphertext = base64.b64decode(payload["ciphertext"])
 
-    # 1. Reconstruct KEK and decrypt DEK
     kek_cipher = _get_kek(kek_salt)
     dek_raw = kek_cipher.decrypt(dek_nonce, encrypted_dek, None)
 
-    # 2. Decrypt ciphertext using DEK
     dek_cipher = AESGCM(dek_raw)
     plaintext_bytes = dek_cipher.decrypt(data_nonce, ciphertext, None)
 
