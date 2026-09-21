@@ -9,12 +9,14 @@ from fastapi import Request
 
 from config.settings import settings
 from utilities.security import append_audit_event, get_current_correlation_id
+from utilities.feature_flags import get_rate_limit_capacity, get_token_refill_rate
 
 logger = logging.getLogger(__name__)
 _redis = redis.Redis.from_url(settings.redis.url, decode_responses=True)
 
 
 def get_runtime_limit(name: str, default_limit: str = "100/minute") -> str:
+    # First check Redis runtime overrides
     raw_value = _redis.get(f"runtime:limit:{name}")
     if raw_value:
         try:
@@ -26,6 +28,14 @@ def get_runtime_limit(name: str, default_limit: str = "100/minute") -> str:
         except (TypeError, ValueError):
             pass
         return str(raw_value)
+
+    # Fall back to feature flags
+    try:
+        capacity = get_rate_limit_capacity(name)
+        return f"{capacity}/minute"
+    except Exception:
+        pass
+
     return default_limit
 
 

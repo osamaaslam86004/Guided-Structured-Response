@@ -329,7 +329,7 @@ Repeated scheduling requests can be cached for function-call extraction and repe
 This project is a strong foundation, but production deployment should include:
 
 - ✅ TLS termination and secure cookie/session configuration
-- ✅ Secrets managed through a proper secret store (e.g. environment injection, Vault, Azure Key Vault, AWS Secrets Manager) via config-managed secure values and admin auth hardening
+- Secrets managed through a proper secret store (e.g. environment injection, Vault, Azure Key Vault, AWS Secrets Manager) via config-managed secure values and admin auth hardening
 - ✅ Strict CORS policy and explicit trusted origins
 - CI/CD pipeline with linting, security scanning, and unit/integration tests (recommended next step for branch protection)
 - ✅ DB migrations and rollback strategy for schema changes
@@ -337,10 +337,26 @@ This project is a strong foundation, but production deployment should include:
 - ✅ User tenancy or multi-tenant isolation for production deployments
 - ✅ Additional retry policies and backoff tuning for Google API calls
 - ✅ Storage of OAuth refresh/write tokens in a hardened secret store
-- ✅ Redis-backed adaptive dynamic throttling to reduce refill rates during provider degradation
-- ✅ DLQ admin replay/dry-run safety controls with idempotency, locks, HMAC auditing, and quarantine
-- ✅ Timezone-aware ISO wall-clock context to prevent DST-related scheduling drift
-- ✅ OAuth token rotation with Redis grace-period serving and token-family revocation
+- ✅ Fine-Grained Tenant RBAC & Security Subsystem                                               1. Technical Deliverables: Enforce tenant ABAC with cryptographically signed JWTs; establish an append-only audit trail                                                   2. Strategic Operational Impact: Prevents cross-tenant data leaks and ensures complete forensic traceability for DLQ replays
+- ✅ Immutable Audit Trail & Structured Event Telemetry Subsystem
+1. Signed tenant JWT context and request-time tenant enforcement
+2. Tenant-aware DLQ replay validation to stop cross-tenant leakage                                               
+3. Centralized append-only audit event writing with HMAC tamper evidence
+4. Correlation ID propagation across requests and task execution
+5. Structured JSON logging enriched with correlation metadata
+6. Audit emission for OAuth refreshes, retry/throttling events, circuit-breaker transitions, and task lifecycle events
+- ✅ Event Streaming Bus & Asynchronous Messaging Subsystem
+1. Automated backpressure: P95/P99 tracking enables real-time load shedding without manual intervention
+2. Zero-downtime tuning: Rate limits and breaker policies can be adjusted live from Redis, no cluster redeploy needed
+3. Scalable event consumption: Redis Streams consumer groups allow horizontal scaling of telemetry processors
+4. Fine-grained observability: Every policy change is recorded in the immutable audit trail with full correlation context
+- ✅ Dynamic Feature Flagging & Anomaly Detection Subsystem
+1. Middleware layer: Intercepts all requests, measures latency, triggers anomaly response
+2. Circuit breaker: Queries feature flags for dynamic threshold adjustment
+3. Rate limiter: Falls back to feature flags for capacity tuning
+4. Background jobs: Can be throttled dynamically via feature flags
+5. Audit trail: All policy changes logged with correlation IDs
+
 
 ## TODO / roadmap
 
@@ -359,16 +375,8 @@ This project is a strong foundation, but production deployment should include:
 - ✅ Add safe DLQ replay, quarantine, and audit controls
 - ✅ Add dynamic throttle reduction using Redis multiplier state
 - ✅ Add OAuth token rotation with Redis grace-window and token-family quarantine
-- ✅ Signed tenant JWT context and request-time tenant enforcement
-- ✅ Tenant-aware DLQ replay validation to stop cross-tenant leakage
-- ✅ Centralized append-only audit event writing with HMAC tamper evidence
-- ✅ Correlation ID propagation across requests and task execution
-- ✅ Structured JSON logging enriched with correlation metadata
-- ✅ Audit emission for OAuth refreshes, retry/throttling events, circuit-breaker transitions, and task lifecycle events"
-- ✅ Automated backpressure: P95/P99 tracking enables real-time load shedding without manual intervention
-- ✅ Zero-downtime tuning: Rate limits and breaker policies can be adjusted live from Redis, no cluster redeploy needed
-- ✅ Scalable event consumption: Redis Streams consumer groups allow horizontal scaling of telemetry processors
-- ✅ Fine-grained observability: Every policy change is recorded in the immutable audit trail with full correlation context
-
-
+- Deploy to test environment and verify Pub/Sub flag updates propagate to running workers
+- Simulate latency spikes to confirm automatic circuit breaker half-open triggering
+- Add monitoring dashboard for real-time percentile visualization
+- Consider advanced anomaly models (seasonal decomposition, ML-based detection)
 ```

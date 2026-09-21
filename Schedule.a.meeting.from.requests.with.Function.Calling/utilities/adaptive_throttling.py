@@ -22,6 +22,11 @@ from utilities.security import (
     append_event_stream,
     record_latency_sample,
 )
+from utilities.feature_flags import (
+    get_token_refill_rate,
+    is_background_job_throttled,
+    set_background_job_throttle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,3 +127,46 @@ def update_runtime_latency(
         metadata={"p99_latency_ms": float(p99_latency_ms)},
     )
     return payload
+
+
+def should_throttle_background_job(job_type: str) -> bool:
+    """Check if a background job type should be throttled based on system health."""
+    return is_background_job_throttled(job_type)
+
+
+def apply_dynamic_throttle_to_job(
+    job_type: str, should_throttle: bool, ttl_seconds: int | None = None
+) -> dict:
+    """Dynamically enable/disable throttling for a background job type."""
+    result = set_background_job_throttle(job_type, should_throttle, ttl_seconds)
+    state = "throttled" if should_throttle else "normal"
+    logger.info("Set background job %s throttle to %s", job_type, state)
+    append_event_stream(
+        "operations:background_jobs",
+        event_type="job_throttle_adjusted",
+        payload={"job_type": job_type, "throttled": should_throttle},
+        correlation_id=get_current_correlation_id(),
+        tenant_id="system",
+    )
+    return result
+
+
+def get_effective_refill_rate(provider: str) -> float:
+    """Get the effective token refill rate for a provider, combining features and runtime values."""
+    # Start with feature flag value
+    feature_rate = get_token_refill_rate(provider)
+
+    # Check for runtime override in Redis
+    try:
+        raw_runtime = redis_client.get(f"runtime:refill_rate:{provider}")
+        if raw_runtime:
+            try:
+                runtime_rate = float(raw_runtime)
+                # Use the more conservative (lower) value
+                return min(feature_rate, runtime_rate)
+            except (ValueError, TypeError):
+                pass
+    except Exception:
+        logger.exception("Failed to read runtime refill rate for %s", provider)
+
+    return feature_rate
