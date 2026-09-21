@@ -28,6 +28,7 @@ from sqlalchemy.pool import NullPool
 from config.settings import settings
 from models.auth_db import OAuthTokenDB
 from utilities.cache import set_cached_function_call
+from utilities.security import append_audit_event, get_current_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,16 @@ async def _rotate_tokens(threshold_minutes: int = 10) -> int:
                             "Token refresh for user %s served from grace window; skipping DB write.",
                             token.user_id,
                         )
+                        append_audit_event(
+                            "oauth_grace_period_hit",
+                            actor_id=token.user_id,
+                            tenant_id=token.user_id,
+                            action="oauth.refresh",
+                            resource=f"user:{token.user_id}",
+                            metadata={"status": "GRACE_PERIOD_HIT"},
+                            request_id=str(token.user_id),
+                            correlation_id=get_current_correlation_id(),
+                        )
                         continue
 
                     access_token = refresh_result["access_token"]
@@ -216,6 +227,20 @@ async def _rotate_tokens(threshold_minutes: int = 10) -> int:
                         "client_secret", token.client_secret
                     )
                     token.scopes = refresh_result.get("scopes", token.scopes)
+
+                    append_audit_event(
+                        "oauth_refresh_succeeded",
+                        actor_id=token.user_id,
+                        tenant_id=token.user_id,
+                        action="oauth.refresh",
+                        resource=f"user:{token.user_id}",
+                        metadata={
+                            "expiry": expiry_dt.isoformat(),
+                            "status": "REFRESHED",
+                        },
+                        request_id=str(token.user_id),
+                        correlation_id=get_current_correlation_id(),
+                    )
 
                     cache_key = f"google_oauth_token:{token.user_id}"
                     cache_payload = {
@@ -245,6 +270,16 @@ async def _rotate_tokens(threshold_minutes: int = 10) -> int:
                         token.user_id,
                         exc,
                     )
+                    append_audit_event(
+                        "oauth_refresh_revoked",
+                        actor_id=token.user_id,
+                        tenant_id=token.user_id,
+                        action="oauth.refresh",
+                        resource=f"user:{token.user_id}",
+                        metadata={"status": "REVOKED", "reason": str(exc)},
+                        request_id=str(token.user_id),
+                        correlation_id=get_current_correlation_id(),
+                    )
                     token.access_token = "REVOKED"
                     token.refresh_token = None
                     await session.commit()
@@ -253,6 +288,16 @@ async def _rotate_tokens(threshold_minutes: int = 10) -> int:
                         "Failed to refresh token for user %s: %s",
                         token.user_id,
                         exc,
+                    )
+                    append_audit_event(
+                        "oauth_refresh_failed",
+                        actor_id=token.user_id,
+                        tenant_id=token.user_id,
+                        action="oauth.refresh",
+                        resource=f"user:{token.user_id}",
+                        metadata={"status": "FAILED", "error": str(exc)},
+                        request_id=str(token.user_id),
+                        correlation_id=get_current_correlation_id(),
                     )
 
             await session.commit()
@@ -272,7 +317,27 @@ def rotate_oauth_tokens():
     try:
         refreshed = asyncio.run(_rotate_tokens(threshold_minutes=10))
         logger.info("Rotated %d OAuth tokens", refreshed)
+        append_audit_event(
+            "oauth_rotation_completed",
+            actor_id="system",
+            tenant_id="system",
+            action="oauth.rotate",
+            resource="oauth_tokens",
+            metadata={"refreshed": refreshed},
+            request_id="oauth_rotation",
+            correlation_id=get_current_correlation_id(),
+        )
         return {"refreshed": refreshed}
     except Exception as exc:
         logger.exception("OAuth rotation failed: %s", exc)
+        append_audit_event(
+            "oauth_rotation_failed",
+            actor_id="system",
+            tenant_id="system",
+            action="oauth.rotate",
+            resource="oauth_tokens",
+            metadata={"error": str(exc)},
+            request_id="oauth_rotation",
+            correlation_id=get_current_correlation_id(),
+        )
         raise

@@ -4,6 +4,7 @@ import logging.config
 import sys
 from typing import Any
 import json
+from utilities.security import get_current_correlation_id
 
 
 class JSONFormatter(logging.Formatter):
@@ -18,6 +19,7 @@ class JSONFormatter(logging.Formatter):
             "module": record.module,
             "func_name": record.funcName,
             "line_no": record.lineno,
+            "correlation_id": get_current_correlation_id(),
         }
 
         # Include exception traces if present

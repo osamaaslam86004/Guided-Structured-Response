@@ -14,6 +14,7 @@ import math
 
 from config.settings import settings
 from dlq import redis_client
+from utilities.security import append_audit_event, get_current_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,15 @@ def set_provider_refill_multiplier(
         if ttl_seconds:
             redis_client.expire(key, int(ttl_seconds))
         logger.info("Set refill multiplier for %s -> %s", provider, multiplier)
+        append_audit_event(
+            "throttle_adjusted",
+            actor_id="system",
+            tenant_id="system",
+            action="throttle.adjust",
+            resource=provider,
+            metadata={"multiplier": multiplier, "ttl_seconds": ttl_seconds},
+            correlation_id=get_current_correlation_id(),
+        )
     except Exception:
         logger.exception("Failed to set refill multiplier for provider %s", provider)
 

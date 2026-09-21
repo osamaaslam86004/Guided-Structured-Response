@@ -5,6 +5,7 @@
 # print(secrets.token_hex(32)) # Generates 64 hex chars like: "a3f5b8..."
 
 import base64
+import contextvars
 import hashlib
 import hmac
 import json
@@ -30,6 +31,21 @@ MASTER_KEY = bytes.fromhex(settings.security.app_master_key)
 JWT_ISSUER = "calendar-scheduling-api"
 DEFAULT_TENANT_TOKEN_TTL_SECONDS = 3600
 AUDIT_REDIS_KEY = "audit:events"
+current_correlation_id = contextvars.ContextVar("current_correlation_id", default=None)
+
+
+def generate_correlation_id() -> str:
+    return uuid.uuid4().hex
+
+
+def get_current_correlation_id() -> str | None:
+    return current_correlation_id.get()
+
+
+def set_current_correlation_id(correlation_id: str | None):
+    if correlation_id is None:
+        return current_correlation_id.set(None)
+    return current_correlation_id.set(str(correlation_id))
 
 
 def _canonical_json(value: dict) -> str:
@@ -149,8 +165,15 @@ def append_audit_event(
     resource: str,
     metadata: dict | None = None,
     request_id: str | None = None,
+    correlation_id: str | None = None,
 ) -> dict:
     try:
+        correlation_id = (
+            correlation_id
+            or request_id
+            or get_current_correlation_id()
+            or generate_correlation_id()
+        )
         payload = {
             "event_type": event_type,
             "event_id": uuid.uuid4().hex,
@@ -159,7 +182,8 @@ def append_audit_event(
             "action": action,
             "resource": resource,
             "metadata": metadata or {},
-            "request_id": request_id,
+            "request_id": request_id or correlation_id,
+            "correlation_id": correlation_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         digest = hmac.new(

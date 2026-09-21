@@ -22,6 +22,7 @@ from routes.admin_analytics import router as admin_analytics_router
 from routes.dlq_admin import router as dlq_admin_router
 
 from middleware.tenant_guard import TenantGuardMiddleware
+from middleware.request_correlation import RequestCorrelationMiddleware
 
 # Initialize global logging before creating the app
 setup_logging(log_level=settings.app.log_level, environment=settings.app.env)
@@ -63,6 +64,7 @@ app.add_middleware(
 )
 
 app.add_middleware(TenantGuardMiddleware)
+app.add_middleware(RequestCorrelationMiddleware)
 
 app.include_router(auth_router)
 app.include_router(event_parser_router)

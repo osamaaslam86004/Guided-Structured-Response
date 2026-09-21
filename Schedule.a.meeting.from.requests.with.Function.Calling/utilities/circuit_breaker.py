@@ -4,6 +4,7 @@ import redis
 from typing import Optional
 
 from config.settings import settings
+from utilities.security import append_audit_event, get_current_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,15 @@ def trip(provider_name: str, ttl_seconds: int = 60) -> None:
         logger.warning(
             "Circuit tripped for provider %s for %s seconds", provider_name, ttl_seconds
         )
+        append_audit_event(
+            "circuit_breaker_tripped",
+            actor_id="system",
+            tenant_id="system",
+            action="circuit_breaker.trip",
+            resource=provider_name,
+            metadata={"ttl_seconds": ttl_seconds, "state": "tripped"},
+            correlation_id=get_current_correlation_id(),
+        )
     except Exception as exc:
         logger.exception("Failed to trip circuit for %s: %s", provider_name, exc)
 
@@ -35,5 +45,14 @@ def trip(provider_name: str, ttl_seconds: int = 60) -> None:
 def clear(provider_name: str) -> None:
     try:
         _redis.delete(_key(provider_name))
+        append_audit_event(
+            "circuit_breaker_cleared",
+            actor_id="system",
+            tenant_id="system",
+            action="circuit_breaker.clear",
+            resource=provider_name,
+            metadata={"state": "cleared"},
+            correlation_id=get_current_correlation_id(),
+        )
     except Exception:
         pass
