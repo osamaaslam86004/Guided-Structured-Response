@@ -1,4 +1,4 @@
-# utilities/securiyt.py
+﻿# utilities/securiyt.py
 
 # Example Generation
 # import secrets
@@ -20,7 +20,7 @@ import redis
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy import Text
 from sqlalchemy.types import TypeDecorator
 
@@ -107,7 +107,7 @@ def verify_tenant_context(token: str | None) -> dict | None:
 
 def get_request_tenant_context(request: Request) -> dict | None:
     token = (
-        request.session.get("tenant_context") if hasattr(request, "session") else None
+        request.session.get("tenant_context") if "session" in request.scope else None
     )
 
     if not token:
@@ -167,6 +167,11 @@ def append_audit_event(
     request_id: str | None = None,
     correlation_id: str | None = None,
 ) -> dict:
+    """
+    Purpose: Appends tamper-evident, HMAC-signed audit logs to a secure Redis queue.
+    Destination: AUDIT_REDIS_KEY (a dedicated Redis key storing append-only audit logs
+    for security, forensic traceability, compliance monitoring, and administrative analysis).
+    """
     try:
         correlation_id = (
             correlation_id
@@ -387,3 +392,53 @@ def read_stream_group(
             "Failed to read Redis Streams group %s/%s", stream_name, group_name
         )
         return []
+
+
+# --- TENANT CONTEXT & AUDIT LOGGING DEPENDENCIES ---
+
+def get_current_tenant_context(request: Request) -> dict:
+    """FastAPI dependency to securely retrieve validated tenant context."""
+    context = getattr(request.state, "tenant_context", None)
+    if not context:
+        raise HTTPException(
+            status_code=401, 
+            detail="Tenant context missing. TenantRBACMiddleware must be installed."
+        )
+    return context
+
+
+class AuditLogger:
+    """
+    A tenant-scoped audit logger dependency.
+    Automatically injects the active tenant ID and fallback mode into the audit record.
+    """
+    def __init__(
+        self, 
+        request: Request, 
+        tenant_context: dict = Depends(get_current_tenant_context)
+    ):
+        self.request = request
+        self.tenant_context = tenant_context
+        self.tenant_id = tenant_context.get("tenant_id")
+        self.fallback_mode = tenant_context.get("fallback_mode", False)
+        # Attempt to pull user_id if authenticated
+        self.user_id = getattr(request.state, "user_id", None)
+
+    def log(self, event_type: str, action: str, resource: str, metadata: dict | None = None) -> dict:
+        """Trigger an audit log entry explicitly bound to the current tenant."""
+        meta = metadata or {}
+        meta["fallback_mode"] = self.fallback_mode
+        
+        return append_audit_event(
+            event_type=event_type,
+            actor_id=self.user_id,
+            tenant_id=self.tenant_id,
+            action=action,
+            resource=resource,
+            metadata=meta
+        )
+
+
+def get_audit_logger(logger: AuditLogger = Depends(AuditLogger)) -> AuditLogger:
+    """FastAPI dependency injection for the scoped AuditLogger."""
+    return logger

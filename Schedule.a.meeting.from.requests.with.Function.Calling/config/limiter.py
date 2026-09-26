@@ -64,14 +64,20 @@ def set_runtime_limit(
 
 def get_identifier(request: Request) -> str:
     """
-    Identifies the client by user ID (if authenticated) or IP address.
+    Identifies the client by tenant ID, user ID, or IP address.
     """
-    # 1. Prefer authenticated user ID (stored in session or request state)
+    # 1. Prefer tenant ID (stored in request.state.tenant_context)
+    if hasattr(request.state, "tenant_context") and request.state.tenant_context.get(
+        "tenant_id"
+    ):
+        return f"tenant:{request.state.tenant_context['tenant_id']}"
+
+    # 2. Prefer authenticated user ID (stored in session or request state)
     user_id = request.session.get("user_id") if hasattr(request, "session") else None
     if user_id:
         return f"user:{user_id}"
 
-    # 2. Fall back to remote IP address
+    # 3. Fall back to remote IP address
     return f"ip:{get_remote_address(request)}"
 
 

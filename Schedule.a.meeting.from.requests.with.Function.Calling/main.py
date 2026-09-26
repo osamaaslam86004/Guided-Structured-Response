@@ -22,8 +22,10 @@ from routes.admin_analytics import router as admin_analytics_router
 from routes.dlq_admin import router as dlq_admin_router
 from routes.feature_flags_admin import router as feature_flags_router
 from routes.monitoring_dashboard import router as monitoring_router
+from routes.tenant_resources import router as tenant_resources_router
 
 from middleware.tenant_guard import TenantGuardMiddleware
+from middleware.tenant_rbac import TenantRBACMiddleware
 from middleware.request_correlation import RequestCorrelationMiddleware
 from middleware.anomaly_detection import AnomalyDetectionMiddleware
 from utilities.feature_flags import initialize_feature_flags
@@ -69,6 +71,7 @@ app.add_middleware(
     allow_headers=settings.security.allow_headers,
 )
 
+app.add_middleware(TenantRBACMiddleware)
 app.add_middleware(TenantGuardMiddleware)
 app.add_middleware(RequestCorrelationMiddleware)
 app.add_middleware(AnomalyDetectionMiddleware)
@@ -82,3 +85,4 @@ app.include_router(admin_analytics_router)
 app.include_router(dlq_admin_router)
 app.include_router(feature_flags_router)
 app.include_router(monitoring_router)
+app.include_router(tenant_resources_router)

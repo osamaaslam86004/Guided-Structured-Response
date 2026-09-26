@@ -2,7 +2,7 @@
 # Now the worker knows exactly whose Google Calendar should be used.
 
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from datetime import datetime, timezone
 import math
 
@@ -29,6 +29,7 @@ router = APIRouter()
 )
 @limiter.limit("5/minute;20/hour")  # Strict rate limit for LLM/Celery execution
 async def async_schedule_meeting(
+    request: Request,
     payload: UserScheduleRequest,
     user: UserDB = Depends(get_current_user),
 ):

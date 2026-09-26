@@ -4,7 +4,7 @@
 # routes/task_status.py
 
 from celery.result import AsyncResult
-from fastapi import APIRouter, HTTPException, Path, status
+from fastapi import APIRouter, HTTPException, Path, status, Request
 
 from config.limiter import limiter
 from schemas import TaskStatusResponse
@@ -24,13 +24,14 @@ UUID4_REGEX = (
 )
 @limiter.limit("60/minute")  # Polling-friendly rate limit
 def get_task_status(
+    request: Request,
     task_id: str = Path(
         ...,
         min_length=36,
         max_length=36,
         pattern=UUID4_REGEX,
         description="UUID v4 standard Celery task identifier",
-    )
+    ),
 ):
     # Retrieve the exact key used by Celery in Redis (e.g., 'celery-task-meta-<task_id>')
     task_key = celery_app.backend.get_key_for_task(task_id)
