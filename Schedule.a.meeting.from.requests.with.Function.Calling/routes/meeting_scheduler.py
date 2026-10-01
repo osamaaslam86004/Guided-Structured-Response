@@ -38,6 +38,26 @@ async def async_schedule_meeting(
     user: UserDB = Depends(get_current_user),
 ):
 
+    # Check circuit breaker health score from anomaly engine
+    flag_anomaly_mgr = getattr(request.app.state, "flag_anomaly_manager", None)
+    if flag_anomaly_mgr:
+        try:
+            if await flag_anomaly_mgr.is_circuit_open():
+                health = await flag_anomaly_mgr.get_health_score()
+                logging.getLogger(__name__).warning(
+                    "Circuit breaker open for user %d; health=%.1f", user.id, health
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"System degraded (health {health:.1f}/100); please retry later",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to check circuit breaker health"
+            )
+
     # Dual-bucket enforcement via settings
     rl = settings.rate_limiting
 

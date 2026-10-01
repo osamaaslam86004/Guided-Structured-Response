@@ -33,6 +33,7 @@ from utilities.feature_flags import initialize_feature_flags
 from telemetry.manager import get_shared_ledger, stop_shared_ledger
 from config.cache import get_redis_client
 from messaging.bus import AsyncMessageBus
+from flags.engine import IntegratedFlagAnomalyManager
 
 # Initialize global logging before creating the app
 setup_logging(log_level=settings.app.log_level, environment=settings.app.env)
@@ -52,6 +53,7 @@ async def lifespan(app: FastAPI):
         )
 
     # Initialize AsyncMessageBus for idempotent request processing
+    redis_client = None
     try:
         redis_client = await get_redis_client()
         message_bus = AsyncMessageBus(redis_client=redis_client, ttl_seconds=3600)
@@ -60,6 +62,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         logging.getLogger(__name__).exception("Failed to initialize message bus")
 
+    # Initialize IntegratedFlagAnomalyManager for feature flags and anomaly detection
+    try:
+        if redis_client is None:
+            redis_client = await get_redis_client()
+        flag_anomaly_mgr = IntegratedFlagAnomalyManager(
+            redis_client=redis_client,
+            anomaly_health_threshold=70.0,
+            nominal_rate_limit=settings.rate_limit.requests_per_minute or 100.0,
+        )
+        await flag_anomaly_mgr.start()
+        app.state.flag_anomaly_manager = flag_anomaly_mgr
+        logging.getLogger(__name__).debug("Initialized IntegratedFlagAnomalyManager")
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Failed to initialize flag/anomaly manager"
+        )
+
     yield
     # Shutdown: Clean up connection pools gracefully
     await close_db()
@@ -67,6 +86,12 @@ async def lifespan(app: FastAPI):
         stop_shared_ledger()
     except Exception:
         logging.getLogger(__name__).exception("Failed to stop shared audit ledger")
+    try:
+        flag_anomaly_mgr = getattr(app.state, "flag_anomaly_manager", None)
+        if flag_anomaly_mgr:
+            await flag_anomaly_mgr.stop()
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to stop flag/anomaly manager")
 
 
 app = FastAPI(
