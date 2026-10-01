@@ -4,8 +4,13 @@
 import json
 import os
 import uuid
+import logging
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
+
+from telemetry.manager import get_shared_ledger
+from config.settings import settings
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -16,6 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from utilities.cache import get_cached_function_call, set_cached_function_call
 from models.auth_db import OAuthTokenDB
+
+# initialize module logger
+logger = logging.getLogger(__name__)
+
 
 CACHE_TTL_SECONDS = 3600  # 1 hour cache window
 DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -108,6 +117,24 @@ class GoogleCalendarService:
                 expire_seconds=CACHE_TTL_SECONDS,
             )
 
+            # Append non-sensitive credential refresh metadata to audit ledger
+            try:
+                ledger = get_shared_ledger()
+                ledger.append(
+                    "credentials_refreshed",
+                    {
+                        "user_id": self.user_id,
+                        "expiry": (
+                            credentials.expiry.isoformat()
+                            if credentials.expiry
+                            else None
+                        ),
+                    },
+                    trace_id=str(self.user_id),
+                )
+            except Exception:
+                logger.exception("Failed to record credential refresh in audit ledger")
+
         return credentials
 
     async def create_event_with_meet(self, event_data) -> Dict[str, Any]:
@@ -146,16 +173,31 @@ class GoogleCalendarService:
             },
         }
 
-        created_event = (
-            service.events()
-            .insert(
-                calendarId=self.calendar_id,
-                body=event_body,
-                conferenceDataVersion=1,
-                sendUpdates=(event_data.send_updates.value),
+        try:
+            created_event = (
+                service.events()
+                .insert(
+                    calendarId=self.calendar_id,
+                    body=event_body,
+                    conferenceDataVersion=1,
+                    sendUpdates=(event_data.send_updates.value),
+                )
+                .execute()
             )
-            .execute()
-        )
+        except Exception as exc:
+            logger.exception("Calendar create failed: %s", exc)
+            try:
+                ledger = get_shared_ledger()
+                ledger.append(
+                    "google_calendar_create_failed",
+                    {"user_id": self.user_id, "error": str(exc)},
+                    trace_id=str(self.user_id),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to record calendar create failure in audit ledger"
+                )
+            raise
 
         conference_data = created_event.get(
             "conferenceData",
@@ -175,6 +217,21 @@ class GoogleCalendarService:
             ),
             created_event.get("hangoutsLink"),
         )
+
+        # Record successful creation in ledger
+        try:
+            ledger = get_shared_ledger()
+            ledger.append(
+                "google_calendar_created",
+                {
+                    "user_id": self.user_id,
+                    "event_id": created_event.get("id"),
+                    "status": created_event.get("status"),
+                },
+                trace_id=str(self.user_id),
+            )
+        except Exception:
+            logger.exception("Failed to record calendar create success in audit ledger")
 
         return {
             "event_id": created_event.get("id"),

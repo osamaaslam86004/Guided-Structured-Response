@@ -5,6 +5,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from datetime import datetime, timezone
 import math
+import logging
 
 from config.cache import get_redis_client
 from config.settings import settings
@@ -19,6 +20,8 @@ from schemas import (
     UserScheduleRequest,
 )
 from tasks.google_calender_meeting import execute_calendar_schedule_task
+from telemetry.manager import get_shared_ledger
+import os
 
 router = APIRouter()
 
@@ -79,6 +82,19 @@ async def async_schedule_meeting(
         user_id=user.id,
         request_text=payload.request_text,
     )
+
+    # Record enqueue event in shared audit ledger
+    try:
+        ledger = get_shared_ledger()
+        ledger.append(
+            "schedule_enqueued",
+            {"task_id": task.id, "user_id": user.id},
+            trace_id=task.id,
+        )
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Failed to write audit ledger enqueue event"
+        )
 
     return TaskStatusResponse(
         task_id=task.id,

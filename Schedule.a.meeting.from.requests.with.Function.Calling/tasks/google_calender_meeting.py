@@ -3,6 +3,7 @@
 import asyncio
 import time
 import logging
+import os
 
 from outlines.templates import Template
 from celery.exceptions import MaxRetriesExceededError
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 from sqlalchemy.exc import SQLAlchemyError
 from dlq import push_dead_letter
+from telemetry.manager import get_shared_ledger
 
 from config.cache import close_redis
 from config.settings import settings
@@ -25,10 +27,10 @@ from services.usage_tracker.service import UsageTrackerService
 from engine import get_calendar_engine
 from tasks.events import publish_task_event
 from services.google_calender.service import get_gcal_service
+from telemetry.manager import get_shared_ledger
 
-# Initialize module logger
+# initialize module logger
 logger = logging.getLogger(__name__)
-
 
 TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 
@@ -76,6 +78,17 @@ async def _execute_schedule(
         {"type": "TASK_STARTED", "task_id": task_id, "user_id": user_id},
     )
 
+    # record task start in shared ledger
+    try:
+        ledger = get_shared_ledger()
+        ledger.append(
+            "task_started",
+            {"task_id": task_id, "user_id": user_id, "request_text": request_text},
+            trace_id=task_id,
+        )
+    except Exception:
+        logger.exception("Failed to append task_started to audit ledger")
+
     publish_task_event(
         task_id,
         {"type": "LLM_STARTED", "task_id": task_id, "user_id": user_id},
@@ -118,6 +131,16 @@ async def _execute_schedule(
         {"type": "GOOGLE_CALENDAR_STARTED", "task_id": task_id, "user_id": user_id},
     )
 
+    # ledger note: google calendar operation starting
+    try:
+        ledger.append(
+            "google_calendar_started",
+            {"task_id": task_id, "user_id": user_id},
+            trace_id=task_id,
+        )
+    except Exception:
+        logger.exception("Failed to append google_calendar_started to audit ledger")
+
     try:
         # Persist record using task-scoped async session from pooled engine
         async with _worker_sessionmaker() as session:
@@ -144,6 +167,20 @@ async def _execute_schedule(
             session.add(record)
             await session.commit()
 
+            # Append successful creation to ledger
+            ledger.append(
+                "google_calendar_created",
+                {
+                    "task_id": task_id,
+                    "user_id": user_id,
+                    "google_event": {
+                        k: v for k, v in gcal_response.items() if k != "raw"
+                    },
+                    "summary": func_call.summary,
+                },
+                trace_id=task_id,
+            )
+
         result = {
             "function_call": func_call.model_dump(),
             "google_calendar_event": gcal_response,
@@ -167,6 +204,7 @@ async def _execute_schedule(
         await _worker_engine.dispose()
         # 2. Cleanly close globally defined Redis connection & reset singleton for next task
         await close_redis()
+        # shared ledger remains running; do not stop here
 
 
 @celery_app.task(

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 
 from config.settings import settings
 from config.limiter import limiter
@@ -29,6 +30,7 @@ from middleware.tenant_rbac import TenantRBACMiddleware
 from middleware.request_correlation import RequestCorrelationMiddleware
 from middleware.anomaly_detection import AnomalyDetectionMiddleware
 from utilities.feature_flags import initialize_feature_flags
+from telemetry.manager import get_shared_ledger, stop_shared_ledger
 
 # Initialize global logging before creating the app
 setup_logging(log_level=settings.app.log_level, environment=settings.app.env)
@@ -39,9 +41,20 @@ initialize_feature_flags()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Run any startup tasks (e.g., warm up Redis cache)
+    try:
+        ledger = get_shared_ledger()
+        app.state.audit_ledger = ledger
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Failed to initialize shared audit ledger"
+        )
     yield
     # Shutdown: Clean up connection pools gracefully
     await close_db()
+    try:
+        stop_shared_ledger()
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to stop shared audit ledger")
 
 
 app = FastAPI(
