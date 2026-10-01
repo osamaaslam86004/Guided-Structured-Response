@@ -31,6 +31,8 @@ from middleware.request_correlation import RequestCorrelationMiddleware
 from middleware.anomaly_detection import AnomalyDetectionMiddleware
 from utilities.feature_flags import initialize_feature_flags
 from telemetry.manager import get_shared_ledger, stop_shared_ledger
+from config.cache import get_redis_client
+from messaging.bus import AsyncMessageBus
 
 # Initialize global logging before creating the app
 setup_logging(log_level=settings.app.log_level, environment=settings.app.env)
@@ -48,6 +50,16 @@ async def lifespan(app: FastAPI):
         logging.getLogger(__name__).exception(
             "Failed to initialize shared audit ledger"
         )
+
+    # Initialize AsyncMessageBus for idempotent request processing
+    try:
+        redis_client = await get_redis_client()
+        message_bus = AsyncMessageBus(redis_client=redis_client, ttl_seconds=3600)
+        app.state.message_bus = message_bus
+        logging.getLogger(__name__).debug("Initialized AsyncMessageBus")
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to initialize message bus")
+
     yield
     # Shutdown: Clean up connection pools gracefully
     await close_db()

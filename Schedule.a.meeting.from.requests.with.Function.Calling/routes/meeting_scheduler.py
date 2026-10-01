@@ -4,8 +4,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from datetime import datetime, timezone
-import math
 import logging
+import hashlib
 
 from config.cache import get_redis_client
 from config.settings import settings
@@ -21,6 +21,7 @@ from schemas import (
 )
 from tasks.google_calender_meeting import execute_calendar_schedule_task
 from telemetry.manager import get_shared_ledger
+from messaging.bus import PayloadMismatchError
 import os
 
 router = APIRouter()
@@ -78,18 +79,67 @@ async def async_schedule_meeting(
             detail="Rate limit exceeded (requests or token quota)",
         )
 
-    task = execute_calendar_schedule_task.delay(
-        user_id=user.id,
-        request_text=payload.request_text,
-    )
+    # Generate idempotency key from user_id and request_text to detect duplicate schedules
+    idempotency_payload = {"user_id": user.id, "request_text": payload.request_text}
+    idempotency_key = f"schedule_meeting:{user.id}:{hashlib.sha256(payload.request_text.encode()).hexdigest()[:16]}"
+
+    # Use message bus for idempotent request processing with jittered retry
+    message_bus = getattr(request.app.state, "message_bus", None)
+    if not message_bus:
+        logging.getLogger(__name__).warning(
+            "Message bus not initialized; falling back to direct enqueue"
+        )
+        task = execute_calendar_schedule_task.delay(
+            user_id=user.id,
+            request_text=payload.request_text,
+        )
+        task_id = task.id
+    else:
+        # Define handler for bus to invoke with retry logic
+        async def enqueue_task(msg_payload):
+            task = execute_calendar_schedule_task.delay(
+                user_id=msg_payload["user_id"],
+                request_text=msg_payload["request_text"],
+            )
+            return {"task_id": task.id, "status": "PENDING"}
+
+        try:
+            result = await message_bus.process_with_retry(
+                handler=enqueue_task,
+                payload=idempotency_payload,
+                idempotency_key=idempotency_key,
+                max_retries=3,
+            )
+            task_id = result.get("task_id")
+        except PayloadMismatchError as exc:
+            # Payload tampering detected: key reuse with modified request
+            logging.getLogger(__name__).warning(
+                "Idempotency key reuse attack detected for user %d: %s",
+                user.id,
+                str(exc),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Request payload modified: idempotency key cannot be reused with different data",
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).exception(
+                "Failed to enqueue task via message bus: %s", exc
+            )
+            # Fallback to direct enqueue on bus failure
+            task = execute_calendar_schedule_task.delay(
+                user_id=user.id,
+                request_text=payload.request_text,
+            )
+            task_id = task.id
 
     # Record enqueue event in shared audit ledger
     try:
         ledger = get_shared_ledger()
         ledger.append(
             "schedule_enqueued",
-            {"task_id": task.id, "user_id": user.id},
-            trace_id=task.id,
+            {"task_id": task_id, "user_id": user.id},
+            trace_id=task_id,
         )
     except Exception:
         logging.getLogger(__name__).exception(
@@ -97,6 +147,6 @@ async def async_schedule_meeting(
         )
 
     return TaskStatusResponse(
-        task_id=task.id,
+        task_id=task_id,
         status="PENDING",
     )
