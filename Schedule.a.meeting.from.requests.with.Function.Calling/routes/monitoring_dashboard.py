@@ -6,7 +6,6 @@ from typing import Optional
 
 import redis
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
 
 from config.settings import settings
 from utilities.anomaly_detector import LatencyPercentileTracker
@@ -15,54 +14,11 @@ from utilities.feature_flags import (
     get_rate_limit_capacity,
     get_oauth_grace_period_hours,
 )
+from schemas import MetricsHistoryPoint, PercentileMetrics, SystemHealthSnapshot
 from utilities.security import get_current_correlation_id
 
 router = APIRouter(prefix="/api/v1/monitoring", tags=["monitoring"])
 _redis = redis.Redis.from_url(settings.redis.url, decode_responses=True)
-
-
-class PercentileMetrics(BaseModel):
-    """Real-time percentile metrics for an operation."""
-
-    operation: str = Field(..., description="Operation name")
-    p50: float = Field(..., description="50th percentile latency (ms)")
-    p95: float = Field(..., description="95th percentile latency (ms)")
-    p99: float = Field(..., description="99th percentile latency (ms)")
-    mean: float = Field(..., description="Mean latency (ms)")
-    std_dev: float = Field(..., description="Standard deviation (ms)")
-    sample_count: int = Field(..., description="Number of samples in window")
-    anomaly_threshold: float = Field(
-        ..., description="Anomaly detection threshold (ms)"
-    )
-    is_anomaly: bool = Field(..., description="Is current state anomalous")
-    last_updated: str = Field(..., description="Last update timestamp")
-
-
-class SystemHealthSnapshot(BaseModel):
-    """Overall system health snapshot with all monitored operations."""
-
-    timestamp: str = Field(..., description="Snapshot timestamp")
-    total_anomalies: int = Field(..., description="Total anomalies detected")
-    operations_monitored: list[str] = Field(
-        ..., description="List of monitored operations"
-    )
-    metrics: dict[str, PercentileMetrics] = Field(
-        ..., description="Metrics per operation"
-    )
-    circuit_breaker_state: dict[str, str] = Field(
-        ..., description="Circuit breaker state per provider"
-    )
-
-
-class MetricsHistoryPoint(BaseModel):
-    """Historical data point for chart visualization."""
-
-    timestamp: str = Field(..., description="Data point timestamp")
-    p50: float
-    p95: float
-    p99: float
-    mean: float
-    is_anomaly: bool
 
 
 @router.get("/health-snapshot", response_model=SystemHealthSnapshot)

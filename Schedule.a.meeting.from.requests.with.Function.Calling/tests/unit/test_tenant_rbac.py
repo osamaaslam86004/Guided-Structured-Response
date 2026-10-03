@@ -1,3 +1,7 @@
+"""
+Add Unit tests for Unit tests for JWT claim parsing & permission gates
+"""
+
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from middleware.tenant_rbac import TenantRBACMiddleware
