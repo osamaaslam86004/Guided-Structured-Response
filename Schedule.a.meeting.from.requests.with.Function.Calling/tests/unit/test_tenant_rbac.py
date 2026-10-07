@@ -1,10 +1,11 @@
 """
-Add Unit tests for Unit tests for JWT claim parsing & permission gates
+Add unit tests covering the merged tenant context middleware.
 """
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-from middleware.tenant_rbac import TenantRBACMiddleware
+from middleware.tenant_context import TenantContextMiddleware
+from utilities.security import build_tenant_context
 import redis
 
 app = FastAPI()
@@ -36,13 +37,21 @@ class MockRedis:
 
 mock_redis = MockRedis()
 app.add_middleware(
-    TenantRBACMiddleware, redis_client=mock_redis, global_rate_limit=5, cluster_nodes=2
+    TenantContextMiddleware,
+    redis_client=mock_redis,
+    global_rate_limit=5,
+    cluster_nodes=2,
 )
 
 
 @app.get("/test")
-async def test_endpoint(request: Request):
-    return {"tenant_context": request.state.tenant_context}
+async def tenant_test_endpoint(request: Request):
+    return {
+        "tenant_context": getattr(request.state, "tenant_context", None),
+        "tenant_claims": getattr(request.state, "tenant_claims", None),
+        "tenant_id": getattr(request.state, "tenant_id", None),
+        "user_id": getattr(request.state, "user_id", None),
+    }
 
 
 client = TestClient(app)
@@ -51,7 +60,7 @@ client = TestClient(app)
 def test_missing_headers():
     response = client.get("/test")
     assert response.status_code == 401
-    assert "Missing X-Tenant-ID header" in response.json()["detail"]
+    assert "Tenant context required" in response.json()["detail"]
 
     response = client.get("/test", headers={"X-Tenant-ID": "tenant1"})
     assert response.status_code == 401
@@ -63,15 +72,46 @@ def test_valid_request():
         "/test", headers={"X-Tenant-ID": "tenant1", "Authorization": "token123"}
     )
     assert response.status_code == 200
-    assert response.json()["tenant_context"]["tenant_id"] == "tenant1"
-    assert response.json()["tenant_context"]["authenticated"] is True
-    assert response.json()["tenant_context"]["fallback_mode"] is False
+    payload = response.json()
+    assert payload["tenant_context"]["tenant_id"] == "tenant1"
+    assert payload["tenant_context"]["authenticated"] is True
+    assert payload["tenant_context"]["fallback_mode"] is False
+    assert payload["tenant_id"] == "tenant1"
+    assert payload["tenant_claims"] == {}
+
+
+def test_jwt_claims_produce_single_context():
+    token = build_tenant_context(
+        "tenant-jwt", scopes=["calendar:read", "calendar:write"]
+    )
+    response = client.get(
+        "/test",
+        headers={"X-Tenant-ID": "tenant-jwt", "X-Tenant-JWT": token},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tenant_context"]["tenant_id"] == "tenant-jwt"
+    assert payload["tenant_context"]["scopes"] == ["calendar:read", "calendar:write"]
+    assert payload["tenant_claims"]["tenant_id"] == "tenant-jwt"
+    assert payload["tenant_id"] == "tenant-jwt"
+
+
+def test_jwt_and_header_tenant_mismatch_rejected():
+    token = build_tenant_context("tenant-jwt")
+    response = client.get(
+        "/test",
+        headers={"X-Tenant-ID": "tenant-other", "X-Tenant-JWT": token},
+    )
+    assert response.status_code == 403
+    assert "Tenant ID mismatch" in response.json()["detail"]
 
 
 def test_revoked_token():
-    mock_redis.set("revoked_token:revoked123", "1")
+    token = "revoked123"
+    hashed = __import__("hashlib").sha256(token.encode("utf-8")).hexdigest()
+    mock_redis.set(f"revoked_token:{hashed}", "1")
     response = client.get(
-        "/test", headers={"X-Tenant-ID": "tenant1", "Authorization": "revoked123"}
+        "/test", headers={"X-Tenant-ID": "tenant1", "Authorization": token}
     )
     assert response.status_code == 403
     assert "Token revoked" in response.json()["detail"]
@@ -93,7 +133,6 @@ def test_global_rate_limit():
 def test_fallback_mode_local_rate_limit():
     mock_redis.is_up = False
 
-    # Global is 5, cluster is 2, local limit should be max(1, 5//2) = 2
     for _ in range(2):
         res = client.get(
             "/test", headers={"X-Tenant-ID": "tenant_loc", "Authorization": "token123"}
@@ -111,6 +150,8 @@ def test_fallback_mode_local_rate_limit():
 if __name__ == "__main__":
     test_missing_headers()
     test_valid_request()
+    test_jwt_claims_produce_single_context()
+    test_jwt_and_header_tenant_mismatch_rejected()
     test_revoked_token()
     test_global_rate_limit()
     test_fallback_mode_local_rate_limit()

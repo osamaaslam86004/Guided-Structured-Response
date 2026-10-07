@@ -30,6 +30,7 @@ mock_limiter.side_effect = dummy_decorator
 
 from fastapi.testclient import TestClient
 from main import app
+from utilities.security import build_tenant_context
 
 client = TestClient(app)
 
@@ -67,6 +68,37 @@ def test_tenant_context_extracted(mock_redis_from_url):
 
 
 @patch("utilities.security.redis.Redis.from_url")
+def test_tenant_context_from_jwt_is_canonicalized(mock_redis_from_url):
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = None
+    mock_redis.incr.return_value = 1
+    mock_redis_from_url.return_value = mock_redis
+
+    token = build_tenant_context("tenant-jwt", scopes=["calendar:read"])
+    headers = {"X-Tenant-ID": "tenant-jwt", "X-Tenant-JWT": token}
+
+    response = client.get("/api/v1/tenant-resources/", headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tenant_id"] == "tenant-jwt"
+
+
+@patch("utilities.security.redis.Redis.from_url")
+def test_tenant_header_and_jwt_mismatch_is_rejected(mock_redis_from_url):
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = None
+    mock_redis.incr.return_value = 1
+    mock_redis_from_url.return_value = mock_redis
+
+    token = build_tenant_context("tenant-jwt")
+    headers = {"X-Tenant-ID": "tenant-other", "X-Tenant-JWT": token}
+
+    response = client.get("/api/v1/tenant-resources/", headers=headers)
+    assert response.status_code == 403
+    assert "Tenant ID mismatch" in response.json()["detail"]
+
+
+@patch("utilities.security.redis.Redis.from_url")
 def test_audit_emission_and_fallback_mode(mock_redis_from_url):
     mock_redis = MagicMock()
     mock_redis.get.return_value = None
@@ -74,7 +106,6 @@ def test_audit_emission_and_fallback_mode(mock_redis_from_url):
     mock_redis_from_url.return_value = mock_redis
 
     headers = {"X-Tenant-ID": "tenant-def", "Authorization": "Bearer action-token"}
-
     payload = {"some_key": "some_value"}
 
     response = client.post(
@@ -99,5 +130,7 @@ def test_audit_emission_and_fallback_mode(mock_redis_from_url):
 if __name__ == "__main__":
     test_tenant_context_missing()
     test_tenant_context_extracted()
+    test_tenant_context_from_jwt_is_canonicalized()
+    test_tenant_header_and_jwt_mismatch_is_rejected()
     test_audit_emission_and_fallback_mode()
     print("All tests passed!")

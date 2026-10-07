@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 class TenantGuardMiddleware(BaseHTTPMiddleware):
+    """Backward-compatible alias for the merged tenant validation + context middleware."""
+
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         if (

@@ -144,13 +144,37 @@ class AsyncMessageBus:
         updated_data = json.dumps(stored_obj, ensure_ascii=False)
         await self.redis.setex(cache_key, self.ttl_seconds, updated_data)
 
+    # @staticmethod
+    # def compute_backoff_delay(
+    #     attempt: int, base_delay: float = 1.0, max_delay: float = 60.0
+    # ) -> float:
+    #     """Compute jittered exponential backoff delay.
+
+    #     Formula: delay = min(base_delay * (2 ^ attempt) + random_jitter, max_delay)
+
+    #     Args:
+    #         attempt: The attempt number (0-indexed).
+    #         base_delay: Base delay in seconds (default: 1.0).
+    #         max_delay: Maximum delay cap in seconds (default: 60.0).
+
+    #     Returns:
+    #         Delay in seconds (float).
+    #     """
+    # exponential = base_delay * (2**attempt)
+    # jitter = random.uniform(0, exponential)
+    # return min(exponential + jitter, max_delay)
+
+    # Execution / Data Flow
+    # jitter is added to exponential before applying min(..., max_delay).
+    # For initial attempts, the delay can reach up to 2x the base exponential value,
+    # skewing standard exponential backoff curves.
     @staticmethod
     def compute_backoff_delay(
         attempt: int, base_delay: float = 1.0, max_delay: float = 60.0
     ) -> float:
-        """Compute jittered exponential backoff delay.
+        """Compute standard standard full jittered backoff delay.
 
-        Formula: delay = min(base_delay * (2 ^ attempt) + random_jitter, max_delay)
+        Formula: delay = min(base_delay * (2 ^ attempt), max_delay)
 
         Args:
             attempt: The attempt number (0-indexed).
@@ -160,9 +184,9 @@ class AsyncMessageBus:
         Returns:
             Delay in seconds (float).
         """
-        exponential = base_delay * (2**attempt)
-        jitter = random.uniform(0, exponential)
-        return min(exponential + jitter, max_delay)
+        calculated_delay = base_delay * (2**attempt)
+        standard_full_jitter_delay = random.uniform(0, min(max_delay, calculated_delay))
+        return standard_full_jitter_delay
 
     async def process_with_retry(
         self,

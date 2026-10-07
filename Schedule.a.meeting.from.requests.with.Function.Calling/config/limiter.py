@@ -8,21 +8,28 @@ from slowapi.util import get_remote_address
 from fastapi import Request
 
 from config.settings import settings
-from config.cache import get_redis_client
 from utilities.security import append_audit_event, get_current_correlation_id
 from utilities.feature_flags import get_rate_limit_capacity, get_token_refill_rate
 
 logger = logging.getLogger(__name__)
 
-# Initialize Redis client for runtime limit overrides
-# Using aysnc Redis to prvent Increased latency for all async endpoints
-# under concurrency due to event loop blocking
-_redis = get_redis_client()
+_runtime_redis_client = None
+
+
+def _get_runtime_redis_client():
+    global _runtime_redis_client
+    if _runtime_redis_client is None:
+        _runtime_redis_client = redis.Redis.from_url(
+            settings.redis.url,
+            decode_responses=True,
+        )
+    return _runtime_redis_client
 
 
 def get_runtime_limit(name: str, default_limit: str = "100/minute") -> str:
+    redis_client = _get_runtime_redis_client()
     # First check Redis runtime overrides
-    raw_value = _redis.get(f"runtime:limit:{name}")
+    raw_value = redis_client.get(f"runtime:limit:{name}") if redis_client else None
     if raw_value:
         try:
             value = json.loads(raw_value)
@@ -48,13 +55,15 @@ def set_runtime_limit(
     name: str, limit_value: str, ttl_seconds: int | None = None
 ) -> str:
     ttl_seconds = ttl_seconds or settings.rate_limit.hot_reload_ttl_seconds
-    _redis.set(
-        f"runtime:limit:{name}",
-        json.dumps(
-            {"limit": str(limit_value), "updated_at": __import__("time").time()}
-        ),
-        ex=ttl_seconds,
-    )
+    redis_client = _get_runtime_redis_client()
+    if redis_client is not None:
+        redis_client.set(
+            f"runtime:limit:{name}",
+            json.dumps(
+                {"limit": str(limit_value), "updated_at": __import__("time").time()}
+            ),
+            ex=ttl_seconds,
+        )
     append_audit_event(
         "rate_limit_policy_updated",
         actor_id="system",
@@ -88,8 +97,6 @@ def get_identifier(request: Request) -> str:
 
 limiter = Limiter(
     key_func=get_identifier,
-    storage_uri=settings.redis.async_url,  # Uses your Redis instance
-    default_limits=[
-        get_runtime_limit("default", "100/minute")
-    ],  # Default global rate limit
+    storage_uri=settings.redis.async_url,
+    default_limits=[get_runtime_limit("default", "100/minute")],
 )

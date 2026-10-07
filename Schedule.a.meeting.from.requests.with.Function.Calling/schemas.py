@@ -51,10 +51,12 @@ class UserScheduleRequest(BaseModel):
         ...,
         min_length=5,
         max_length=5000,
-        example=(
-            "Schedule a team sync with john@example.com and sarah@company.com"
-            " tomorrow at 3 PM UTC for 45 minutes to discuss project roadmap."
-        ),
+        json_schema_extra={
+            "example": (
+                "Schedule a team sync with john@example.com and sarah@company.com"
+                " tomorrow at 3 PM UTC for 45 minutes to discuss project roadmap."
+            )
+        },
     )
 
 
