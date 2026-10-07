@@ -1,5 +1,6 @@
 import time
 import logging
+import hashlib
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -75,9 +76,14 @@ class TenantRBACMiddleware(BaseHTTPMiddleware):
             redis_available = False
 
         if redis_available and redis_client:
+
+            # To Prevent exposure of live bearer tokens in Redis MONITOR output, KEYS/SCAN listings,
+            # slow logs, and replication streams, enabling potential session hijacking.
+            token_hash = hashlib.sha256(auth_token.encode("utf-8")).hexdigest()
+
             # Check Bloom filter / Authorization Cache for token invalidation
-            # Using standard Redis string GET as a fallback if Bloom Filter module is missing
-            is_revoked = await redis_client.get(f"revoked_token:{auth_token}")
+            # Using hashed Redis string GET as a fallback if Bloom Filter module is missing
+            is_revoked = await redis_client.get(f"revoked_token:{token_hash}")
             if is_revoked:
                 return JSONResponse(
                     status_code=403,

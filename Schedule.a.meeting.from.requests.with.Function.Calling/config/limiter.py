@@ -8,11 +8,16 @@ from slowapi.util import get_remote_address
 from fastapi import Request
 
 from config.settings import settings
+from config.cache import get_redis_client
 from utilities.security import append_audit_event, get_current_correlation_id
 from utilities.feature_flags import get_rate_limit_capacity, get_token_refill_rate
 
 logger = logging.getLogger(__name__)
-_redis = redis.Redis.from_url(settings.redis.url, decode_responses=True)
+
+# Initialize Redis client for runtime limit overrides
+# Using aysnc Redis to prvent Increased latency for all async endpoints
+# under concurrency due to event loop blocking
+_redis = get_redis_client()
 
 
 def get_runtime_limit(name: str, default_limit: str = "100/minute") -> str:

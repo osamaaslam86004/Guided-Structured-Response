@@ -20,8 +20,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 1. Define Sub-Configs using standard BaseModel
 class AppConfig(BaseModel):
-    name: str = "My FastAPI Application"
-    description: str = 100
+    name: str = "FastAPI Application"
+    description: str = "Meeting Scheduler Service"
     env: Literal["development", "staging", "production"] = "development"
     debug: bool = False
     log_level: str = "INFO"
@@ -30,9 +30,9 @@ class AppConfig(BaseModel):
 
 class SecurityConfig(BaseModel):
     # secret_key: str
-    session_secret: str = 32
+    session_secret: str
     # algorithm: str = "HS256"
-    front_end_url: int = 100
+    front_end_url: HttpUrl = Field(default="http://localhost:3000")
     allow_origins: list[AnyHttpUrl] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )

@@ -218,8 +218,13 @@ class FeatureFlagEngine:
             logger.debug(
                 "Feature flag Pub/Sub listener started on %s", self.pubsub_channel
             )
+
             # Start background listener task
-            asyncio.create_task(self._pubsub_listener())
+            self._background_tasks = set()
+            task = asyncio.create_task(self._pubsub_listener())
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+
         except Exception:
             logger.exception("Failed to start feature flag Pub/Sub listener")
 

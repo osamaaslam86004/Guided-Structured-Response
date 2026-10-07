@@ -1,6 +1,7 @@
 # config/database.py
 
-from typing import AsyncGenerator
+from contextlib import contextmanager
+from typing import AsyncGenerator, Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.asyncio import (
@@ -10,7 +11,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from config.settings import settings
-from models.base import Base
 
 # Ensure the database URL uses the asyncpg driver for async operations
 ASYNC_DATABASE_URL = str(settings.db.async_url)
@@ -66,9 +66,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 # Context manager dependency for Celery Tasks
-def get_sync_db() -> Session:
+@contextmanager
+def get_sync_db() -> Generator[Session, None, None]:
     db = SyncSessionLocal()
     try:
-        return db
+        yield db
     finally:
         db.close()
